@@ -5,10 +5,12 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
 } from "node:fs";
 import path from "node:path";
 import { git, runCommand } from "./exec.js";
+import { gateDirFor } from "./toolcall-record.js";
 
 export interface Worktree {
   path: string;
@@ -98,6 +100,7 @@ export async function removeWorktree(wt: Worktree, o?: { deleteBranch?: boolean 
       }
     }
     if (lastErr) throw lastErr;
+    rmSync(gateDirFor(wt.path), { recursive: true, force: true });
     await git(["worktree", "prune"], wt.repoRoot);
     if (o?.deleteBranch && wt.branch) {
       try {

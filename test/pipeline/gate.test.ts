@@ -202,6 +202,93 @@ describe("quoted separators", () => {
   });
 });
 
+// Regressions (found in review): shell constructs ran or wrote past the allowlist and path checks.
+describe("shell constructs", () => {
+  const reason = (pol: GatePolicy, c: string) =>
+    decide(pol, call("run_command", { CommandLine: c })).reason ?? "";
+
+  it("denies redirection, substitution, grouping, background and multi-line commands", () => {
+    for (const c of [
+      "echo pwned >../../outside.txt",
+      "echo {} > .agents/foreman-policy.json",
+      "cat src/a.ts >> src/b.ts",
+      "cat < src/a.ts",
+      "echo $(node src/x.js)",
+      'echo "$(node src/x.js)"',
+      "echo `node src/x.js`",
+      "echo ${HOME}",
+      "echo (node src/x.js)",
+      "echo @(node src/x.js)",
+      "npm test & node src/x.js",
+      "npm test\nnode src/x.js",
+      "npm test\r\nnode src/x.js",
+      'echo \\"> ../x',
+    ]) {
+      expect(d(p(), "run_command", { CommandLine: c }), JSON.stringify(c)).toBe("deny");
+    }
+    expect(reason(p(), "echo $(node src/x.js)")).toMatch(/Shell construct not allowed: \$\(/);
+    expect(reason(p(), "npm test\nnode src/x.js")).toMatch(/line break/);
+  });
+
+  it("denies them in explore mode too, where echo is allowed", () => {
+    const explore = p({ mode: "explore" });
+    expect(d(explore, "run_command", { CommandLine: "echo x > src/a.ts" })).toBe("deny");
+    expect(d(explore, "run_command", { CommandLine: "echo $(node -e 1)" })).toBe("deny");
+    expect(d(explore, "run_command", { CommandLine: "echo hello" })).toBe("auto_approve");
+  });
+
+  it("allows harmless stream merges and quoted text", () => {
+    for (const c of [
+      "npm test 2>&1",
+      "npx vitest run test/a.test.ts 2>/dev/null",
+      "git status > $null",
+      "git status >NUL",
+      'Select-String -Path src -Pattern "=>" -List',
+      "git log --format='<%h> (%s)'",
+      "npx vitest run -t 'parse > counts (x)'",
+      "echo 'a & b ; $(c)'",
+    ]) {
+      expect(d(p(), "run_command", { CommandLine: c }), c).toBe("auto_approve");
+    }
+  });
+
+  it("still checks redirect targets when unknown commands are allowed", () => {
+    const allow = p({ unknownCommands: "allow" });
+    expect(d(allow, "run_command", { CommandLine: "python gen.py > out.txt" })).toBe(
+      "auto_approve",
+    );
+    expect(reason(allow, "python gen.py >../../out.txt")).toMatch(/inside the worktree/);
+    expect(reason(allow, "python gen.py 2>../../err.txt")).toMatch(/inside the worktree/);
+  });
+
+  it("treats every environment variable as outside the worktree", () => {
+    for (const c of ["cat $USERPROFILE/.npmrc", "cat $XDG_CONFIG_HOME/x", "type $Env:APPDATA/x"]) {
+      expect(reason(p(), c), c).toMatch(/inside the worktree/);
+    }
+  });
+
+  it("splits on a lone & and line breaks so each command is checked", async () => {
+    const { splitCommandSegments } = await import("../../src/pipeline/gate.js");
+    expect(splitCommandSegments("npm test & node x.js")).toEqual(["npm test", "node x.js"]);
+    expect(splitCommandSegments("npm test\nnode x.js")).toEqual(["npm test", "node x.js"]);
+    expect(splitCommandSegments('echo "a\nb" && ls')).toEqual(['echo "a\nb"', "ls"]);
+  });
+});
+
+describe("allowlist prefixes", () => {
+  it("end at a space or the end of the command, not at any word boundary", () => {
+    const pol = p({ allowedCommands: ["npx tsc", "npm run lint"] });
+    expect(d(pol, "run_command", { CommandLine: "npx tsc" })).toBe("auto_approve");
+    expect(d(pol, "run_command", { CommandLine: "npx tsc --noEmit" })).toBe("auto_approve");
+    // npx installs and runs an unknown package without asking when stdin is not a TTY.
+    expect(d(pol, "run_command", { CommandLine: "npx tsc-evil" })).toBe("deny");
+    expect(d(pol, "run_command", { CommandLine: "npx tsc@latest" })).toBe("deny");
+    expect(d(pol, "run_command", { CommandLine: "npm run lint:fix" })).toBe("deny");
+    expect(d(pol, "run_command", { CommandLine: "cat-evil x" })).toBe("deny");
+    expect(d(pol, "run_command", { CommandLine: "git status-evil" })).toBe("deny");
+  });
+});
+
 // Regression (found in CI on macOS): the worktree was /var/... while agy reported /private/var/...,
 // the same folder through a symlink, and every write looked like it left the worktree.
 describe("symlinked worktree paths", () => {

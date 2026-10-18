@@ -22,7 +22,8 @@ List of files to modify, files to create, and explicit list of files to leave un
 
 <constraints>
 - Do not run git commit.
-- Do not modify protected test files or contract test files.
+- Do not modify tests, contract tests, test-runner config, package.json or .agy-foreman.json (the server restores them before verifying).
+- Run one plain command per call: the gate denies redirection, $( ), backticks, background & and multi-line commands.
 - Never add code paths that exist only to make a specific test pass; if a test looks wrong, stop and report.
 </constraints>
 

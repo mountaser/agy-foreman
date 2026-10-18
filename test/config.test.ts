@@ -7,6 +7,7 @@ import {
   ConfigError,
   CONFIG_FILE,
 } from "../src/config.js";
+import { globToRegExp } from "../src/pipeline/gate.js";
 
 describe("parseProjectConfig", () => {
   it("applies defaults to an empty object", () => {
@@ -25,6 +26,45 @@ describe("parseProjectConfig", () => {
     expect(c.unknownCommands).toBe("deny");
     expect(c.allowedMcp).toEqual([]);
     expect(c.web).toBe(false);
+  });
+
+  // Regression (found in review): only test files were protected, so Gemini could rewrite the
+  // test script or runner config that decides whether the contract tests run at all.
+  it("protects tests, the files that decide how they run, and this tool's config", () => {
+    const res = parseProjectConfig({}).protectedPaths.map(globToRegExp);
+    const covered = (f: string) => res.some((re) => re.test(f));
+    for (const f of [
+      "test/a.test.ts",
+      "src/a.spec.ts",
+      "tests/conftest.py",
+      "package.json",
+      "packages/web/package.json",
+      "vitest.config.ts",
+      "vite.config.mts",
+      "packages/web/jest.config.js",
+      "playwright.config.ts",
+      ".mocharc.yml",
+      "tsconfig.json",
+      "packages/web/tsconfig.build.json",
+      "pyproject.toml",
+      "pytest.ini",
+      "setup.cfg",
+      "tox.ini",
+      "Makefile",
+      ".agy-foreman.json",
+    ]) {
+      expect(covered(f), f).toBe(true);
+    }
+    for (const f of [
+      "src/a.ts",
+      "src/config.ts",
+      "package-lock.json",
+      "docs/vitest.md",
+      "lib/Makefile.am",
+    ]) {
+      expect(covered(f), f).toBe(false);
+    }
+    expect(parseProjectConfig({}).protectedPaths).not.toBe(parseProjectConfig({}).protectedPaths);
   });
 
   it("validates tool-gate settings", () => {

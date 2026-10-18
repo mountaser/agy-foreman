@@ -2,7 +2,8 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { git, runCommand } from "./exec.js";
 import { globToRegExp } from "./gate.js";
-import { parseJUnit, type TestCounts } from "./junit.js";
+import { contractCases, parseJUnit, type ContractCases, type TestCounts } from "./junit.js";
+import { runSuite } from "./suite.js";
 import {
   changedFiles,
   gitStateChanged,
@@ -23,6 +24,8 @@ export interface VerifyInput {
   timeoutMs: number;
   /** Commit the job started from (before contract tests); defaults to wt.baseSha. */
   startSha?: string;
+  /** The contract test files: each of their cases must be in the report and pass. */
+  contractPaths?: string[];
 }
 
 export interface VerifyReport {
@@ -30,6 +33,10 @@ export interface VerifyReport {
   timedOut: boolean;
   passed: boolean;
   counts?: TestCounts;
+  /** test_report is set but this run wrote no report, so nothing could be counted. */
+  reportMissing: boolean;
+  /** The contract tests' own cases in this run's report (when the job has contract tests). */
+  contractCases?: ContractCases & { green: boolean };
   newSkips: number;
   fewerTests: boolean;
   protectedRestored: string[];
@@ -69,22 +76,23 @@ export async function verify(i: VerifyInput): Promise<VerifyReport> {
     }
   }
 
-  // 2. Run testCommand in the worktree
-  const execRes = await runCommand(i.testCommand, {
-    cwd: i.wt.path,
-    timeoutMs: i.timeoutMs,
-  });
+  // 2. Run testCommand in the worktree (after deleting any report an earlier run or Gemini left)
+  const { result: execRes, report } = await runSuite(
+    i.wt.path,
+    i.testCommand,
+    i.testReport,
+    i.timeoutMs,
+  );
   const exitCode = execRes.code;
   const timedOut = execRes.timedOut;
 
-  // 3. If testReport is set and the file exists, counts = parseJUnit(file)
-  let counts: TestCounts | undefined = undefined;
-  if (i.testReport) {
-    const reportPath = path.resolve(i.wt.path, i.testReport);
-    if (existsSync(reportPath)) {
-      const xml = readFileSync(reportPath, "utf8");
-      counts = parseJUnit(xml);
-    }
+  // 3. counts = parseJUnit(report); a configured report this run didn't write fails the job
+  const reportMissing = Boolean(i.testReport) && report === undefined;
+  const counts = report === undefined ? undefined : parseJUnit(report);
+  let contract: VerifyReport["contractCases"];
+  if (i.contractPaths && i.contractPaths.length > 0) {
+    const cc = contractCases(report ?? "", i.contractPaths);
+    contract = { ...cc, green: cc.collected > 0 && cc.failed.length === 0 && cc.skipped === 0 };
   }
 
   // 4. newSkips and fewerTests
@@ -165,7 +173,13 @@ export async function verify(i: VerifyInput): Promise<VerifyReport> {
 
   // 7. passed
   const passed =
-    exitCode === 0 && !timedOut && newSkips === 0 && !fewerTests && tamper.length === 0;
+    exitCode === 0 &&
+    !timedOut &&
+    !reportMissing &&
+    (contract?.green ?? true) &&
+    newSkips === 0 &&
+    !fewerTests &&
+    tamper.length === 0;
 
   // 8. failures and outputTail
   const failures = counts ? counts.failed : [];
@@ -176,6 +190,8 @@ export async function verify(i: VerifyInput): Promise<VerifyReport> {
     timedOut,
     passed,
     counts,
+    reportMissing,
+    ...(contract ? { contractCases: contract } : {}),
     newSkips,
     fewerTests,
     protectedRestored,

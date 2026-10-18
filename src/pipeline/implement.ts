@@ -1,10 +1,9 @@
 // Execution pipeline for implement jobs (contract tests, worktree, gate, verification).
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
 import { renderBrief, RUN_PROMPT } from "./brief.js";
-import { addContractTests, redCheck } from "./contract.js";
+import { addContractTests, NEEDS_REPORT, redCheck } from "./contract.js";
 import { git, runCommand } from "./exec.js";
 import { parseJUnit, type TestCounts } from "./junit.js";
+import { runSuite } from "./suite.js";
 import { verify, type VerifyReport } from "./verify.js";
 import {
   commitAll,
@@ -30,7 +29,15 @@ export async function runImplementJob(
 ): Promise<Envelope> {
   // 1. prepare
   deps.onPhase?.("prepare");
-  if (!spec.config.testCommand || spec.config.testCommand.length === 0) {
+  const contractPaths = (spec.contractTests ?? []).map((t) => t.path.replace(/\\/g, "/"));
+  const unverifiable =
+    !spec.config.testCommand || spec.config.testCommand.length === 0
+      ? "config.test_command is required for implement jobs"
+      : contractPaths.length > 0 && !spec.config.testReport
+        ? NEEDS_REPORT
+        : undefined;
+  // `!spec.config.testCommand` repeats the first check so TS narrows testCommand below.
+  if (unverifiable || !spec.config.testCommand) {
     let baseSha = "";
     try {
       baseSha = await git(["rev-parse", `${spec.baseRef ?? "HEAD"}^{commit}`], spec.repoRoot);
@@ -39,12 +46,11 @@ export async function runImplementJob(
     }
     return buildEnvelope(spec, deps, startTime, {
       state: "refused",
-      reason: "config.test_command is required for implement jobs",
+      reason: unverifiable,
       baseSha,
     });
   }
 
-  const contractPaths = (spec.contractTests ?? []).map((t) => t.path.replace(/\\/g, "/"));
   const allowedCommands: string[] = [];
   if (spec.config.testCommand) {
     allowedCommands.push(spec.config.testCommand.join(" "));
@@ -110,11 +116,16 @@ export async function runImplementJob(
       deps.onPhase?.("contract");
       if (spec.contractTests && spec.contractTests.length > 0) {
         await addContractTests(wt, spec.contractTests);
-        const { red } = await redCheck(wt, testCommand, spec.timeoutSec * 1000);
-        if (!red) {
+        const rc = await redCheck(wt, {
+          testCommand,
+          testReport: spec.config.testReport,
+          contractPaths,
+          timeoutMs: spec.timeoutSec * 1000,
+        });
+        if (!rc.red) {
           return buildEnvelope(spec, deps, startTime, {
             state: "refused",
-            reason: "contract tests already pass on base",
+            reason: rc.reason,
             branch: wt.branch,
             worktreePath: wt.path,
             baseSha: wt.baseSha,
@@ -122,23 +133,16 @@ export async function runImplementJob(
           });
         }
         contractInfo = { redOnBase: true, greenAfter: false };
-      }
-
-      if (spec.config.testReport) {
-        const reportPath = path.resolve(wt.path, spec.config.testReport);
-        if (!existsSync(reportPath)) {
-          await runCommand(testCommand, {
-            cwd: wt.path,
-            timeoutMs: spec.timeoutSec * 1000,
-          });
-        }
-        if (existsSync(reportPath)) {
-          try {
-            baseline = parseJUnit(readFileSync(reportPath, "utf8"));
-          } catch {
-            // ignore malformed report
-          }
-        }
+        // The red run is the baseline: same commit, contract tests included.
+        baseline = rc.counts;
+      } else if (spec.config.testReport) {
+        const { report } = await runSuite(
+          wt.path,
+          testCommand,
+          spec.config.testReport,
+          spec.timeoutSec * 1000,
+        );
+        if (report !== undefined) baseline = parseJUnit(report);
       }
     },
   });
@@ -175,9 +179,10 @@ export async function runImplementJob(
         ignoreBranch: wt.branch ?? undefined,
         timeoutMs: spec.timeoutSec * 1000,
         startSha,
+        contractPaths,
       });
       if (contractInfo) {
-        contractInfo.greenAfter = verifyReport.passed;
+        contractInfo.greenAfter = verifyReport.contractCases?.green ?? verifyReport.passed;
       }
       jobState = verifyReport.passed ? "passed" : "failed";
     }

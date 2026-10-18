@@ -95,10 +95,7 @@ describe("wait and watch", () => {
 describe("detectTestCommand and init", () => {
   it("detects npm, pytest and go projects", () => {
     const npm = mkdtempSync(path.join(os.tmpdir(), "foreman-det-"));
-    writeFileSync(
-      path.join(npm, "package.json"),
-      JSON.stringify({ scripts: { test: "vitest run" } }),
-    );
+    writeFileSync(path.join(npm, "package.json"), JSON.stringify({ scripts: { test: "jest" } }));
     writeFileSync(path.join(npm, "package-lock.json"), "{}");
     expect(detectTestCommand(npm)).toEqual({
       test_command: ["npm", "test"],
@@ -115,6 +112,37 @@ describe("detectTestCommand and init", () => {
     expect(detectTestCommand(go)).toEqual({ test_command: ["go", "test", "./..."] });
     expect(detectTestCommand(mkdtempSync(path.join(os.tmpdir(), "foreman-det-")))).toEqual({});
   });
+  it("gives vitest projects a JUnit report, so contract tests can be checked", () => {
+    const junit = [
+      "npm",
+      "test",
+      "--",
+      "--reporter=default",
+      "--reporter=junit",
+      "--outputFile.junit=reports/junit.xml",
+    ];
+    for (const [script, reported] of [
+      ["vitest run", true],
+      ["vitest", true],
+      ["tsc --noEmit && vitest run --coverage", true],
+      ["vitest run && eslint .", false],
+      ["cross-env CI=1 vitest run", false],
+    ] as const) {
+      const dir = mkdtempSync(path.join(os.tmpdir(), "foreman-det-"));
+      writeFileSync(path.join(dir, "package.json"), JSON.stringify({ scripts: { test: script } }));
+      const d = detectTestCommand(dir);
+      expect(d, script).toEqual(
+        reported
+          ? {
+              test_command: junit,
+              setup_command: ["npm", "install"],
+              test_report: "reports/junit.xml",
+            }
+          : { test_command: ["npm", "test"], setup_command: ["npm", "install"] },
+      );
+    }
+  });
+
   it("init writes the config once and prints the registration command", async () => {
     const repo = mkdtempSync(path.join(os.tmpdir(), "foreman-init-"));
     writeFileSync(path.join(repo, "go.mod"), "module x\n");

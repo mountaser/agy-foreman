@@ -3,9 +3,12 @@ import { appendFileSync, mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  GATE_DIR_GLOBAL,
   POLICY_FILE,
   REVIEW_FILE,
   appendReview,
+  gateDirFor,
+  hookScript,
   readPolicy,
   readReview,
   toolSubject,
@@ -42,6 +45,20 @@ describe("tool-call record", () => {
     appendReview(d, { t: "2", name: "view_file", decision: "auto_approve", arg: "src/a.ts" });
     expect(readReview(d).map((e) => e.t)).toEqual(["1", "2"]);
     expect(readReview(d)[0]).toMatchObject({ decision: "deny", arg: "git push" });
+  });
+
+  it("keeps the gate folder next to the worktree, not inside it", () => {
+    const wt = path.join(os.tmpdir(), "wt", "t-1");
+    expect(gateDirFor(wt)).toBe(path.resolve(wt) + ".gate");
+    expect(path.relative(wt, gateDirFor(wt)).startsWith("..")).toBe(true);
+  });
+
+  it("sets the gate folder before the bundle runs, after any shebang", () => {
+    const line = `globalThis.${GATE_DIR_GLOBAL} = "C:\\\\g";\n`;
+    expect(hookScript("import x;\n", "C:\\g")).toBe(line + "import x;\n");
+    expect(hookScript("#!/usr/bin/env node\nimport x;\n", "C:\\g")).toBe(
+      "#!/usr/bin/env node\n" + line + "import x;\n",
+    );
   });
 
   it("names what a tool call acts on with one rule", () => {

@@ -99,10 +99,24 @@ export function detectTestCommand(repoRoot: string): {
           existsSync(path.join(repoRoot, "pnpm-lock.yaml")) ||
           existsSync(path.join(repoRoot, "bun.lockb")) ||
           existsSync(path.join(repoRoot, "bun.lock"));
-        return {
-          test_command: ["npm", "test"],
-          setup_command: hasLock ? ["npm", "ci"] : ["npm", "install"],
-        };
+        const setup_command = hasLock ? ["npm", "ci"] : ["npm", "install"];
+        // Contract tests need a JUnit report; vitest writes one when the flags reach it, which
+        // they do when it is the script's last command.
+        if (/(^|&&\s*)vitest(\s[^&|;]*)?$/.test(String(pkg.scripts.test).trim())) {
+          return {
+            test_command: [
+              "npm",
+              "test",
+              "--",
+              "--reporter=default",
+              "--reporter=junit",
+              "--outputFile.junit=reports/junit.xml",
+            ],
+            setup_command,
+            test_report: "reports/junit.xml",
+          };
+        }
+        return { test_command: ["npm", "test"], setup_command };
       }
     } catch {
       // ignore

@@ -1,8 +1,12 @@
 import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { decide } from "./gate.js";
-import { appendReview, readPolicy, toolSubject, type ReviewEntry } from "./toolcall-record.js";
+import {
+  appendReview,
+  hookGateDir,
+  readPolicy,
+  toolSubject,
+  type ReviewEntry,
+} from "./toolcall-record.js";
 
 function main() {
   try {
@@ -12,8 +16,8 @@ function main() {
     const name = String(toolCall.name ?? "");
     const args = (toolCall.args ?? {}) as Record<string, unknown>;
 
-    const agentsDir = path.dirname(fileURLToPath(import.meta.url));
-    const policy = readPolicy(agentsDir);
+    const gateDir = hookGateDir();
+    const policy = readPolicy(gateDir);
 
     const res = decide(policy, { name, args });
 
@@ -27,7 +31,7 @@ function main() {
       arg,
     };
 
-    appendReview(agentsDir, logEntry);
+    appendReview(gateDir, logEntry);
 
     process.stdout.write(JSON.stringify(res));
   } catch (err: unknown) {

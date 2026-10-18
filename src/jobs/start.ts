@@ -6,7 +6,12 @@ import path from "node:path";
 import { buildArgs } from "../agy/run.js";
 import type { Config } from "../config.js";
 import { renderBrief, RUN_PROMPT } from "../pipeline/brief.js";
-import { addContractTests, redCheck, type ContractTest } from "../pipeline/contract.js";
+import {
+  addContractTests,
+  NEEDS_REPORT,
+  redCheck,
+  type ContractTest,
+} from "../pipeline/contract.js";
 import type { JobSpec } from "../pipeline/index.js";
 import { resolveSkills } from "../pipeline/skills.js";
 import { createWorktree, removeWorktree } from "../pipeline/worktree.js";
@@ -117,6 +122,10 @@ export async function prepareStartJob(
 
   // 4. Token gate (implement only, skipped on dry run)
   const config = deps.loadConfig(i.repoRoot);
+  // Before the approval card: a job whose contract tests can't be checked would only be refused.
+  if (i.kind === "implement" && !i.dryRun && contractTests?.length && !config.project.testReport) {
+    return { type: "result", result: { state: "refused", reason: NEEDS_REPORT } };
+  }
   if (i.kind === "implement" && !i.dryRun) {
     const gateResult = tokenGate(i.estimate, config.project.refuseRatio);
     if (gateResult.refuse) {
@@ -171,6 +180,7 @@ export async function prepareStartJob(
 
     const contractTestPaths = (contractTests ?? []).map((t) => t.path);
     let redOnBase: boolean | undefined;
+    let redReason: string | undefined;
 
     if (
       contractTests &&
@@ -187,12 +197,14 @@ export async function prepareStartJob(
       });
       try {
         await addContractTests(wt, contractTests);
-        const { red } = await redCheck(
-          wt,
-          config.project.testCommand,
-          (i.timeoutSec ?? config.runtime.defaultTimeoutSec) * 1000,
-        );
-        redOnBase = red;
+        const rc = await redCheck(wt, {
+          testCommand: config.project.testCommand,
+          testReport: config.project.testReport,
+          contractPaths: contractTestPaths,
+          timeoutMs: (i.timeoutSec ?? config.runtime.defaultTimeoutSec) * 1000,
+        });
+        redOnBase = rc.red;
+        redReason = rc.reason;
       } finally {
         await removeWorktree(wt, { deleteBranch: true });
       }
@@ -210,6 +222,7 @@ export async function prepareStartJob(
         })),
         contractTests: contractTestPaths,
         ...(redOnBase !== undefined ? { redOnBase } : {}),
+        ...(redReason !== undefined ? { redReason } : {}),
       },
     };
   }

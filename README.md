@@ -73,10 +73,10 @@ flowchart LR
 
 1. Start: Claude calls `agy_start` with a task and a token estimate; jobs that are cheaper to do directly are refused.
 2. Approve: one card per plan, valid for 24 hours or until the plan file changes.
-3. Isolate: a git worktree, your setup command, and contract tests that must fail before Gemini starts.
-4. Gate: a hook decides every tool call; your global agy settings can't widen it.
+3. Isolate: a git worktree, your setup command, and contract tests whose own cases must fail before Gemini starts.
+4. Gate: a hook decides every tool call; your global agy settings can't widen it. Its policy lives outside the worktree, commands must be plain (no redirection, `$( )` or background `&`), and the run stops if the hook's files change.
 5. Run: Gemini runs headless; if the quota runs out, you choose retry, continue without Gemini, or wait.
-6. Verify: protected files are restored, then the tests run and the counts and git state are checked for tampering.
+6. Verify: protected files (tests, test-runner config, `package.json`) are restored, then the tests run. Every contract case must be in the JUnit report and pass, and the counts and git state are checked for tampering.
 7. Merge: Claude reviews the result and squashes the branch.
 
 When a job fails, the failure is recorded as an incident and Claude writes a one-line lesson. Lessons that match a new task are added to its brief. A lesson that shows up three times is offered to you as a permanent rule for the skill.
@@ -104,45 +104,48 @@ When a job fails, the failure is recorded as an incident and Claude writes a one
 
 ### Configuration
 
-`init` creates `.agy-foreman.json` in the repo root:
+`init` creates `.agy-foreman.json` in the repo root. For a vitest project, with one allowed command added by hand:
 
 ```json
 {
   "test_command": [
-    "npx",
-    "vitest",
-    "run",
+    "npm",
+    "test",
+    "--",
     "--reporter=default",
     "--reporter=junit",
     "--outputFile.junit=reports/junit.xml"
   ],
-  "test_report": "reports/junit.xml",
   "setup_command": ["npm", "ci"],
-  "allowed_commands": ["npm run typecheck", "npx prettier"],
-  "protected_paths": ["test/**", "**/*.test.*"]
+  "test_report": "reports/junit.xml",
+  "allowed_commands": ["npm run typecheck"]
 }
 ```
 
-| Key                  | Default       | Meaning                                       |
-| -------------------- | ------------- | --------------------------------------------- |
-| `test_command`       | none          | Command the server runs to verify             |
-| `test_report`        | none          | JUnit report for test counts                  |
-| `setup_command`      | none          | Runs in each new worktree                     |
-| `allowed_commands`   | `[]`          | Extra commands Gemini may run                 |
-| `unknown_commands`   | `deny`        | `deny`, `allow` or `ask_user`                 |
-| `protected_paths`    | test globs    | Files Gemini may not change                   |
-| `approval`           | `per_plan`    | `per_plan` or `per_task`                      |
-| `effort`             | `high`        | `low`, `medium` or `high`                     |
-| `max_concurrent`     | `2`           | Jobs at once                                  |
-| `max_runs_per_hour`  | `10`          | Hourly cap                                    |
-| `refuse_ratio`       | `1.5`         | When delegating costs more than doing it      |
-| `allowed_mcp`, `web` | `[]`, `false` | MCP tools and web access for Gemini           |
-| `gate`               | `elicitation` | `client` if your client has no approval cards |
+| Key                  | Default       | Meaning                                                                 |
+| -------------------- | ------------- | ----------------------------------------------------------------------- |
+| `test_command`       | none          | Command the server runs to verify                                       |
+| `test_report`        | none          | JUnit report: test counts, and required to check contract tests         |
+| `setup_command`      | none          | Runs in each new worktree                                               |
+| `allowed_commands`   | `[]`          | Extra commands Gemini may run, as whole words (`npx tsc` ≠ `npx tsc-x`) |
+| `unknown_commands`   | `deny`        | `deny`, `allow` or `ask_user`                                           |
+| `protected_paths`    | see below     | Files Gemini may not change                                             |
+| `approval`           | `per_plan`    | `per_plan` or `per_task`                                                |
+| `effort`             | `high`        | `low`, `medium` or `high`                                               |
+| `max_concurrent`     | `2`           | Jobs at once                                                            |
+| `max_runs_per_hour`  | `10`          | Hourly cap                                                              |
+| `refuse_ratio`       | `1.5`         | When delegating costs more than doing it                                |
+| `allowed_mcp`, `web` | `[]`, `false` | MCP tools and web access for Gemini                                     |
+| `gate`               | `elicitation` | `client` if your client has no approval cards                           |
+
+`protected_paths` defaults to the tests (`test/**`, `tests/**`, `*.test.*`, `*.spec.*`, `test_*.py`, `*_test.*`, `conftest.py`), the files that decide how they run (`package.json`, vitest, vite, jest, playwright, karma and mocha config, `tsconfig*.json`, `pyproject.toml`, `pytest.ini`, `setup.cfg`, `tox.ini`, `Makefile`), and `.agy-foreman.json`. Setting it replaces the whole list.
 
 ## Limitations
 
 - **Gemini 3.8 Flash only**, with effort `low`, `medium` or `high`. Other models in agy need plans that this project doesn't target.
 - **Implement jobs need a test command.** Without a machine check there is nothing to verify, so the skill tells Claude not to delegate.
+- **Contract tests need a JUnit report that names each test's file.** vitest and pytest do (`init` sets both up); jest needs jest-junit with `addFileAttribute`, and Go a converter such as gotestsum. Without `test_report`, jobs with contract tests are refused.
+- **Tasks that need a new dependency or a config change** can't be done by Gemini, since `package.json` and the runner config are protected. Make that change yourself first.
 - **agy starts your global agy MCP servers on every run.** The gate denies Gemini access to them, but they still start up. agy has no per-run switch to turn this off.
 
 ## Terms of service

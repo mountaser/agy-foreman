@@ -73,7 +73,7 @@ export function renderBrief(i: BriefInput): string {
 
   // 4. <constraints>
   sections.push(
-    `<constraints>\n- Do not run git commit\n- Do not edit protected test files\n- Keep changes scoped to the task\n</constraints>`,
+    `<constraints>\n- Do not run git commit\n- Do not edit tests, test-runner config (package.json, vitest/jest/pytest config, tsconfig) or .agy-foreman.json: they are restored before verification. If the task needs a change there, stop and say so in your report\n- Run one plain command per call: no redirection (> or <), $( ) or backticks, background &, or several lines. Write files with the file tools\n- Keep changes scoped to the task\n</constraints>`,
   );
 
   // 5. <verification> (implement only)

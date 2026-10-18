@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { verify } from "../../src/pipeline/verify.js";
 import {
@@ -22,6 +22,18 @@ mkdirSync("reports", { recursive: true });
 writeFileSync("reports/junit.xml", (${JUNIT_SRC})(3, ok ? 0 : 1, extraSkip));
 process.exit(ok ? 0 : 1);
 `;
+
+const junit = (cases: [classname: string, name: string, body: string][]) =>
+  "<testsuite>" +
+  cases.map(([c, n, b]) => `<testcase classname="${c}" name="${n}">${b}</testcase>`).join("") +
+  "</testsuite>";
+
+/** A test command that exits 0 after writing this report. */
+const writeReport = (xml: string) => [
+  "node",
+  "-e",
+  `const fs = require("fs"); fs.mkdirSync("reports", { recursive: true }); fs.writeFileSync("reports/junit.xml", ${JSON.stringify(xml)});`,
+];
 
 async function setup() {
   const repo = makeRepo({
@@ -91,6 +103,54 @@ describe("verify", () => {
       baseline: { tests: 5, failures: 0, errors: 0, skipped: 0, failed: [] },
     });
     expect(r).toMatchObject({ fewerTests: true, passed: false });
+    await removeWorktree(wt, { deleteBranch: true });
+  }, 30_000);
+
+  // Regression (found in review): verify read whatever report was on disk, so one written by
+  // Gemini (or left by the red check) could stand in for a run that wrote none.
+  it("deletes a stale report first and fails when the run writes none", async () => {
+    const { wt, base } = await setup();
+    writeFileSync(path.join(wt.path, "src/v.txt"), "good\n");
+    mkdirSync(path.join(wt.path, "reports"), { recursive: true });
+    writeFileSync(path.join(wt.path, "reports/junit.xml"), junit([["t", "c0", ""]]));
+    const r = await verify({ ...base, testCommand: ["node", "-e", "process.exit(0)"] });
+    expect(r).toMatchObject({ exitCode: 0, reportMissing: true, passed: false });
+    expect(r.counts).toBeUndefined();
+    expect(existsSync(path.join(wt.path, "reports/junit.xml"))).toBe(false);
+    await removeWorktree(wt, { deleteBranch: true });
+  }, 30_000);
+
+  // Regression (found in review): green was the suite's exit code, so a runner that ignored the
+  // contract tests, or a config that stopped failures from failing the run, still passed.
+  it("requires every contract case to be in the report and pass", async () => {
+    const { wt, base } = await setup();
+    writeFileSync(path.join(wt.path, "src/v.txt"), "good\n");
+    const run = (cases: [string, string, string][]) =>
+      verify({
+        ...base,
+        baseline: undefined,
+        contractPaths: ["tests/t.mjs"],
+        testCommand: writeReport(junit(cases)),
+      });
+
+    const green = await run([
+      ["tests/t.mjs", "adds", ""],
+      ["src/x.mjs", "other", ""],
+    ]);
+    expect(green).toMatchObject({ passed: true, contractCases: { collected: 1, green: true } });
+
+    const failing = await run([["tests/t.mjs", "adds", "<failure/>"]]);
+    expect(failing).toMatchObject({
+      exitCode: 0,
+      passed: false,
+      contractCases: { collected: 1, failed: ["tests/t.mjs > adds"], green: false },
+    });
+
+    const skipped = await run([["tests/t.mjs", "adds", "<skipped/>"]]);
+    expect(skipped).toMatchObject({ passed: false, contractCases: { skipped: 1, green: false } });
+
+    const missing = await run([["src/x.mjs", "other", ""]]);
+    expect(missing).toMatchObject({ passed: false, contractCases: { collected: 0, green: false } });
     await removeWorktree(wt, { deleteBranch: true });
   }, 30_000);
 

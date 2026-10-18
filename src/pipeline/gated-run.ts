@@ -160,11 +160,11 @@ export async function gatedRun(
 
     const policy = buildGatePolicy(spec, wt.path, options.extraPolicySettings);
 
-    await installGate(wt.path, policy, deps.hookBundlePath);
+    const gate = await installGate(wt.path, policy, deps.hookBundlePath);
 
     deps.onPhase?.("run");
     const guardEvents: string[] = [];
-    const rawGuard = makeGuard(policy);
+    const rawGuard = makeGuard(policy, gate);
     const guard = (ev: StreamEvent): string | null => {
       const g = rawGuard(ev);
       if (g) guardEvents.push(g);

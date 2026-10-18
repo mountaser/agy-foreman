@@ -39,6 +39,7 @@ function setup(config: object) {
 describe("gated run", () => {
   it("removes an implement job's worktree when the run throws", async () => {
     const { repo, spec, deps } = setup({ test_command: ["node", "-e", "process.exit(1)"] });
+    spec.contractTests = undefined;
     await expect(runJob(spec, deps)).rejects.toThrow("agy crashed");
     expect(existsSync(path.join(deps.worktreeRoot, repoHash(repo), spec.jobId))).toBe(false);
   }, 60_000);
@@ -48,6 +49,7 @@ describe("gated run", () => {
     const noTests = await runJob(refused.spec, refused.deps);
     const failed = setup({
       test_command: ["node", "-e", "process.exit(1)"],
+      test_report: "reports/junit.xml",
       setup_command: ["node", "-e", "process.exit(7)"],
     });
     const setupFailed = await runJob(failed.spec, failed.deps);

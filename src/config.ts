@@ -15,22 +15,46 @@ export class ConfigError extends Error {
 
 const command = z.array(z.string().min(1)).min(1);
 
+/**
+ * Files Gemini may not change: verify restores them before running the tests. Tests alone aren't
+ * enough: a test script, runner config or setup file decides which tests run and whether a failure
+ * fails the run, and .agy-foreman.json decides what the next job's gate allows. Lockfiles are left
+ * out: setup_command (`npm install`) may create one, and by verify the dependencies are installed.
+ */
+export const DEFAULT_PROTECTED_PATHS = [
+  // tests
+  "tests/**",
+  "test/**",
+  "**/test_*.py",
+  "**/*_test.*",
+  "**/*.spec.*",
+  "**/*.test.*",
+  "**/conftest.py",
+  // test runners and the scripts that start them
+  "**/package.json",
+  "**/vitest.config.*",
+  "**/vitest.workspace.*",
+  "**/vite.config.*",
+  "**/jest.config.*",
+  "**/playwright.config.*",
+  "**/karma.conf.*",
+  "**/.mocharc.*",
+  "**/tsconfig*.json",
+  "**/pyproject.toml",
+  "**/pytest.ini",
+  "**/setup.cfg",
+  "**/tox.ini",
+  "Makefile",
+  // this tool's own config
+  ".agy-foreman.json",
+];
+
 const projectSchema = z
   .object({
     test_command: command.optional(),
     setup_command: command.optional(),
     test_report: z.string().min(1).optional(),
-    protected_paths: z
-      .array(z.string().min(1))
-      .default([
-        "tests/**",
-        "test/**",
-        "**/test_*.py",
-        "**/*_test.*",
-        "**/*.spec.*",
-        "**/*.test.*",
-        "**/conftest.py",
-      ]),
+    protected_paths: z.array(z.string().min(1)).default(() => [...DEFAULT_PROTECTED_PATHS]),
     model: z.string().min(1).default("gemini-3.8-flash-high"),
     effort: z.enum(EFFORTS).default("high"),
     gate: z.enum(["elicitation", "client"]).default("elicitation"),

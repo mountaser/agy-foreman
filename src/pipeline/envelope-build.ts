@@ -2,7 +2,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { readReview } from "./toolcall-record.js";
+import { gateDirFor, readReview } from "./toolcall-record.js";
 import type { AgyUsage, Outcome } from "../agy/types.js";
 import type { Citation, Envelope, JobSpec, JobState, PipelineDeps } from "./index.js";
 import type { VerifyReport } from "./verify.js";
@@ -13,8 +13,7 @@ export function fenceUntrusted(text: string, nonce: string): string {
 }
 
 export function getDeniedCommands(worktreePath: string): string[] {
-  const agentsDir = path.join(worktreePath, ".agents");
-  const entries = readReview(agentsDir);
+  const entries = readReview(gateDirFor(worktreePath));
   const denied: string[] = [];
   for (const entry of entries) {
     if (entry.decision === "deny" && entry.name === "run_command" && entry.arg) {

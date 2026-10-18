@@ -10,6 +10,7 @@ Do **not** delegate:
 - **Security-sensitive code**: Cryptographic keys, authentication logic, credential handling, and permissions.
 - **Tasks without machine checks**: Any write task lacking automated tests or verification commands.
 - **Small edits**: Minor bugfixes, typos, or changes under ~60 lines / 1–2 tool calls.
+- **Dependency or test-config changes**: `package.json`, runner config and `tsconfig` are protected and restored before verification. Make those changes yourself, commit them, then delegate the rest.
 - **Information retrieval primitives**: Never delegate simple `grep`, regex searches, or file listing. The orchestrator does these directly.
 - **Interactive or ongoing debugging**: Tasks needing iterative conversational feedback with the user.
 - **Final review**: The orchestrator always conducts final code review.

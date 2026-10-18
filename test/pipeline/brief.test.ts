@@ -47,7 +47,8 @@ describe("renderBrief", () => {
       "Models live in src/db/models.",
       ".agy-task/progress.md",
       "Do not run git commit",
-      "Do not edit protected test files",
+      "Do not edit tests, test-runner config",
+      "Run one plain command per call",
     ]) {
       expect(full).toContain(s);
     }

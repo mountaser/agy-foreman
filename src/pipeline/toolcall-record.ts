@@ -4,6 +4,33 @@ import type { GateDecision, GatePolicy } from "./gate.js";
 
 export const POLICY_FILE = "foreman-policy.json";
 export const REVIEW_FILE = "foreman-review.jsonl";
+/** The global the copied hook script sets before the bundle runs: the job's gate folder. */
+export const GATE_DIR_GLOBAL = "__foremanGateDir";
+
+/**
+ * The job's gate folder, holding the policy and the review log: a sibling of the worktree, so
+ * commands Gemini runs inside the worktree can't rewrite its own rules (the gate denies paths
+ * outside the worktree). agy only runs hooks from `<worktree>/.agents/`, so the hook script stays
+ * there and is told this folder by the line hookScript() puts in front of the bundle.
+ */
+export function gateDirFor(worktree: string): string {
+  return `${path.resolve(worktree)}.gate`;
+}
+
+/** The hook bundle with the gate folder set first (after a shebang line, if any). */
+export function hookScript(bundle: string, gateDir: string): string {
+  const line = `globalThis.${GATE_DIR_GLOBAL} = ${JSON.stringify(gateDir)};\n`;
+  if (!bundle.startsWith("#!")) return line + bundle;
+  const eol = bundle.indexOf("\n") + 1 || bundle.length;
+  return bundle.slice(0, eol) + line + bundle.slice(eol);
+}
+
+/** The gate folder the running hook was given, or an error (the hook then denies the call). */
+export function hookGateDir(): string {
+  const dir = (globalThis as Record<string, unknown>)[GATE_DIR_GLOBAL];
+  if (typeof dir !== "string" || !dir) throw new Error("gate folder not set");
+  return dir;
+}
 
 export interface ReviewEntry {
   t: string;

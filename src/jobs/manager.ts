@@ -48,6 +48,8 @@ export type StartResult =
       skills: { name: string; claudeOnlyRefs: string[] }[];
       contractTests: string[];
       redOnBase?: boolean;
+      /** Why the contract tests are not red on the base. */
+      redReason?: string;
     };
 
 export interface GetOptions {

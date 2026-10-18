@@ -1,13 +1,7 @@
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-} from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { writePolicy } from "./toolcall-record.js";
+import { gateDirFor, hookScript, POLICY_FILE, writePolicy } from "./toolcall-record.js";
 
 export interface GatePolicy {
   mode: "implement" | "explore";
@@ -30,7 +24,15 @@ export interface ToolCall {
   args: Record<string, unknown>;
 }
 
-export const HOOK_COMMAND = "node foreman-hook.mjs";
+const HOOK_SCRIPT = "foreman-hook.mjs";
+export const HOOK_COMMAND = `node ${HOOK_SCRIPT}`;
+
+export interface InstalledGate {
+  /** The job's gate folder (policy and review log), outside the worktree. */
+  dir: string;
+  /** gateFingerprint() right after installing. */
+  fingerprint: string;
+}
 
 export function globToRegExp(glob: string): RegExp {
   const g = glob.replace(/\\/g, "/");
@@ -106,15 +108,22 @@ function getRelPosix(worktree: string, resolvedPath: string): string {
   return rel.split(path.sep).join("/");
 }
 
+// Stream merges and discards that write nothing anywhere: 2>&1, >&2, 2>/dev/null, >$null, >NUL.
+const HARMLESS_REDIRECT = /(^|\s)(?:\d?>&\d|(?:\d|&)?>>?\s*(?:\/dev\/null|\$null|NUL))(?=\s|$)/gi;
+
 /**
  * Returns the first path-like token in a command line that points outside the worktree
  * (absolute paths, `..` escapes, home or environment-variable expansions), or null.
+ * Redirection operators are stripped first, so `>../x` is checked as `../x`.
  */
 function pathOutsideWorktree(worktree: string, cmdLine: string): string | null {
-  const tokens = cmdLine.split(/[\s,=]+/).map((t) => t.replace(/^["'(]+|["')]+$/g, ""));
+  const tokens = cmdLine
+    .replace(HARMLESS_REDIRECT, "$1")
+    .split(/[\s,=]+/)
+    .map((t) => t.replace(/^\d*[<>]+&?/, "").replace(/^["'(]+|["')]+$/g, ""));
   for (const tok of tokens) {
     if (!tok) continue;
-    if (/^(~|\$env:|\$HOME\b|%[A-Za-z_]+%)/i.test(tok)) return tok;
+    if (/^(~|\$[A-Za-z_{]|%[A-Za-z_]+%)/.test(tok)) return tok;
     // Drive paths, POSIX roots, UNC paths and `..` escapes. A lone leading backslash is left
     // alone: it is far more often a string escape (node -e '…\"x\"…') than a root-relative path.
     // A drive path can never be inside a worktree on Linux or macOS (there it would otherwise
@@ -128,8 +137,9 @@ function pathOutsideWorktree(worktree: string, cmdLine: string): string | null {
 }
 
 /**
- * Splits a command line on &&, ||, ; and | outside of quotes, so a quoted regex like
- * -Pattern "A|B" stays one segment (found live: the gate denied a harmless Select-String).
+ * Splits a command line on &&, ||, ;, |, a lone & and line breaks outside of quotes, so a quoted
+ * regex like -Pattern "A|B" stays one segment (found live: the gate denied a harmless
+ * Select-String) and every command in the line is checked on its own.
  */
 export function splitCommandSegments(cmdLine: string): string[] {
   const out: string[] = [];
@@ -154,7 +164,7 @@ export function splitCommandSegments(cmdLine: string): string[] {
       i++;
       continue;
     }
-    if (c === ";" || c === "|") {
+    if (c === ";" || c === "|" || c === "&" || c === "\n" || c === "\r") {
       out.push(cur);
       cur = "";
       continue;
@@ -163,6 +173,47 @@ export function splitCommandSegments(cmdLine: string): string[] {
   }
   out.push(cur);
   return out.map((x) => x.trim()).filter(Boolean);
+}
+
+/**
+ * The first shell construct in a command line that lets a command run another program, write or
+ * read a file the gate never sees, or hide a second command: redirection (> <), a lone &,
+ * grouping and subexpressions ( ( ) { } ), backticks, $( and ${, line breaks, and escaped quotes
+ * (bash and PowerShell disagree on them). Single quotes make everything literal; double quotes
+ * keep only backticks, $( and ${ live. Returns null when there is none.
+ */
+export function shellConstruct(cmdLine: string): string | null {
+  const line = cmdLine.replace(HARMLESS_REDIRECT, "$1");
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    const next = line[i + 1] ?? "";
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      continue;
+    }
+    if (c === "`") return "`";
+    if (c === "$" && (next === "(" || next === "{")) return c + next;
+    if (quote === '"') {
+      if (c === '"') quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      quote = c;
+      continue;
+    }
+    if (c === "\\" && (next === '"' || next === "'")) return c + next;
+    if (c === "\n" || c === "\r") return "a line break";
+    if (c === "&") {
+      if (next === "&") {
+        i++;
+        continue;
+      }
+      return c;
+    }
+    if (/[<>(){}]/.test(c)) return c;
+  }
+  return null;
 }
 
 export function decide(policy: GatePolicy, call: ToolCall): GateDecision {
@@ -256,11 +307,26 @@ export function decide(policy: GatePolicy, call: ToolCall): GateDecision {
       };
     }
 
-    const segments = splitCommandSegments(cmdLine);
+    // `unknown_commands: "allow"` already lets any program run; everywhere else, a construct like
+    // `echo $(node x.js)` or `echo x > .agents/hooks.json` would run or write past the allowlist.
+    if (policy.mode === "explore" || policy.unknownCommands !== "allow") {
+      const construct = shellConstruct(cmdLine);
+      if (construct) {
+        return {
+          decision: "deny",
+          reason: `Shell construct not allowed: ${construct}. Run one plain command per call (2>&1 is fine), and write files with the file tools.`,
+        };
+      }
+    }
 
-    const readOnlyGit = /^git\s+(status|diff|log|show|ls-files|rev-parse|grep|blame)\b/i;
+    // Without 2>&1 and friends, whose & would otherwise split off a "command" named 1.
+    const segments = splitCommandSegments(cmdLine.replace(HARMLESS_REDIRECT, "$1"));
+
+    // Every prefix must end at a space or the end: `npx tsc` must not allow `npx tsc-evil`, which
+    // npx would download and run without asking in a headless run.
+    const readOnlyGit = /^git\s+(status|diff|log|show|ls-files|rev-parse|grep|blame)(?=\s|$)/i;
     const listings =
-      /^(ls|dir|cat|type|echo|pwd|Get-ChildItem|Get-Content|Test-Path|Select-String)\b/i;
+      /^(ls|dir|cat|type|echo|pwd|Get-ChildItem|Get-Content|Test-Path|Select-String)(?=\s|$)/i;
 
     for (const seg of segments) {
       if (policy.mode === "explore") {
@@ -270,7 +336,7 @@ export function decide(policy: GatePolicy, call: ToolCall): GateDecision {
         }
       } else {
         const isAllowedPrefix = policy.allowedCommands.some((cmd) =>
-          new RegExp(`^${escapeRegex(cmd)}\\b`, "i").test(seg),
+          new RegExp(`^${escapeRegex(cmd.trim())}(?=\\s|$)`, "i").test(seg),
         );
         const isOk = isAllowedPrefix || readOnlyGit.test(seg) || listings.test(seg);
         if (!isOk) {
@@ -321,16 +387,43 @@ export function decide(policy: GatePolicy, call: ToolCall): GateDecision {
   return { decision: "deny", reason: `Tool ${name} is not allowed.` };
 }
 
+/**
+ * One hash over the files that decide tool calls: `.agents/hooks.json`, the hook script and the
+ * policy. If it changes during a run, something rewrote the gate (the guard then stops the run).
+ */
+export function gateFingerprint(worktree: string): string {
+  const h = createHash("sha256");
+  for (const file of [
+    path.join(worktree, ".agents", "hooks.json"),
+    path.join(worktree, ".agents", HOOK_SCRIPT),
+    path.join(gateDirFor(worktree), POLICY_FILE),
+  ]) {
+    let content: Buffer | string = "(missing)";
+    try {
+      content = readFileSync(file);
+    } catch {
+      // a deleted file changes the hash too
+    }
+    h.update(file).update("\0").update(content).update("\0");
+  }
+  return h.digest("hex");
+}
+
 export async function installGate(
   worktree: string,
   policy: GatePolicy,
   hookBundlePath: string,
-): Promise<void> {
+): Promise<InstalledGate> {
   const agentsDir = path.join(worktree, ".agents");
   mkdirSync(agentsDir, { recursive: true });
 
-  copyFileSync(hookBundlePath, path.join(agentsDir, "foreman-hook.mjs"));
-  writePolicy(agentsDir, policy);
+  const gateDir = gateDirFor(worktree);
+  writeFileSync(
+    path.join(agentsDir, HOOK_SCRIPT),
+    hookScript(readFileSync(hookBundlePath, "utf8"), gateDir),
+    "utf8",
+  );
+  writePolicy(gateDir, policy);
 
   const hooksPath = path.join(agentsDir, "hooks.json");
   let existingHooks: Record<string, unknown> = {};
@@ -358,4 +451,5 @@ export async function installGate(
   };
 
   writeFileSync(hooksPath, JSON.stringify(existingHooks, null, 2), "utf8");
+  return { dir: gateDir, fingerprint: gateFingerprint(worktree) };
 }

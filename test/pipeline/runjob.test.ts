@@ -16,8 +16,8 @@ import { fixture } from "../helpers.js";
 const RUNNER = `import { readdirSync, writeFileSync, mkdirSync } from "node:fs";
 let cases = "", failed = 0;
 for (const f of readdirSync("tests").filter((f) => f.endsWith(".test.mjs"))) {
-  try { await import("./tests/" + f); cases += '<testcase classname="t" name="' + f + '"/>'; }
-  catch (e) { failed++; cases += '<testcase classname="t" name="' + f + '"><failure>' + e.message + '</failure></testcase>'; }
+  try { await import("./tests/" + f); cases += '<testcase classname="tests/' + f + '" name="runs"/>'; }
+  catch (e) { failed++; cases += '<testcase classname="tests/' + f + '" name="runs"><failure>' + e.message + '</failure></testcase>'; }
 }
 mkdirSync("reports", { recursive: true });
 writeFileSync("reports/junit.xml", "<testsuite>" + cases + "</testsuite>");
@@ -130,6 +130,31 @@ describe("runJob implement", () => {
     expect(env.reason).toMatch(/test_command/);
   }, 60_000);
 
+  it("refuses contract tests without a test report to check them in", async () => {
+    const { spec, deps } = setup("implement");
+    spec.config = parseProjectConfig({ test_command: ["node", "run.mjs"] });
+    const env = await runJob(spec, deps);
+    expect(env).toMatchObject({ state: "refused", reason: expect.stringMatching(/test_report/) });
+  }, 60_000);
+
+  // Regression (found in review): an unrelated failing test made the base "red", so a contract
+  // that already passed was handed to Gemini.
+  it("does not count an unrelated failing test as the contract failing", async () => {
+    const { spec, deps } = setup("implement", { FAKE_AGY_EDITS: "{}" });
+    spec.contractTests = [{ path: "tests/ok.test.mjs", content: "// passes\n" }];
+    spec.repoRoot = makeRepo({
+      "run.mjs": RUNNER,
+      "tests/old.test.mjs": 'throw new Error("broken before the job");\n',
+      "src/add.mjs": "export const add = () => 0;\n",
+    });
+    const env = await runJob(spec, deps);
+    expect(env).toMatchObject({
+      state: "refused",
+      reason: expect.stringMatching(/already pass on base/),
+      contract: { redOnBase: false },
+    });
+  }, 60_000);
+
   it("runs setup_command in the fresh worktree before any test run", async () => {
     const { spec, deps } = setup("implement", {
       FAKE_AGY_EDITS: JSON.stringify({ "src/add.mjs": "export const add = (a, b) => a + b;\n" }),
@@ -161,6 +186,7 @@ describe("runJob implement", () => {
     const { spec, deps } = setup("implement");
     spec.config = parseProjectConfig({
       test_command: ["node", "run.mjs"],
+      test_report: "reports/junit.xml",
       setup_command: ["node", "-e", "console.error('no network'); process.exit(7)"],
     });
     const env = await runJob(spec, deps);

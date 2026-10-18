@@ -120,6 +120,21 @@ describe("JobManager.start", () => {
     ).toMatchObject({ state: "refused", reason: expect.stringMatching(/cheaper to do directly/) });
   });
 
+  it("refuses contract tests without test_report before showing a card", async () => {
+    const { m, repo, approver, specs } = setup();
+    const contract = [{ path: "test/a.test.ts", content: "it('x', () => {});\n" }];
+    const r = await m.start({
+      repoRoot: repo,
+      kind: "implement",
+      task: "x",
+      contractTests: contract,
+      estimate: EST,
+    });
+    expect(r).toMatchObject({ state: "refused", reason: expect.stringMatching(/test_report/) });
+    expect(approver.calls).toEqual([]);
+    expect(specs).toEqual([]);
+  });
+
   it("returns denied when the user denies the card", async () => {
     const { m, repo } = setup({ approver: new FakeApprover({ task: false }) });
     expect(
