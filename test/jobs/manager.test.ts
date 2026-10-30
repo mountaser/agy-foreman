@@ -77,6 +77,7 @@ function setup(
       runtime: loadRuntimeConfig({}),
     }),
     now: () => now,
+    infraRetryDelayMs: 0,
   };
   return { m: new JobManager(deps), deps, repo, specs, approver, setNow: (d: Date) => (now = d) };
 }
@@ -654,5 +655,28 @@ describe("default timeout", () => {
   });
   it("lets an explicit timeout win", async () => {
     expect(await timeoutOf({}, 10, 400, 900)).toBe(900);
+  });
+});
+
+describe("service errors", () => {
+  const err503 = (s: JobSpec) => envelope(s, "error", { reason: "UNAVAILABLE (code 503)" });
+  it("resumes once after a 503 and then stops", async () => {
+    const { m, repo, specs, deps } = setup({ result: err503 });
+    await m.start({ repoRoot: repo, kind: "implement", task: "Fix it", estimate: EST });
+    await m.idle();
+    await new Promise((r) => setTimeout(r, 150));
+    await m.idle();
+    expect(specs).toHaveLength(2);
+    expect(specs[1].task).toContain("cut off by a service error");
+    expect((await deps.store.list()).map((j) => j.attempt ?? 1)).toEqual([1, 1]);
+  });
+  it("does not resume an error that is not a service error", async () => {
+    const { m, repo, specs } = setup({
+      result: (s) => envelope(s, "error", { reason: "bad config" }),
+    });
+    await m.start({ repoRoot: repo, kind: "implement", task: "Fix it", estimate: EST });
+    await m.idle();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(specs).toHaveLength(1);
   });
 });

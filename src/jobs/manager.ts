@@ -88,6 +88,8 @@ export interface JobManagerDeps {
   now: () => Date;
   lessons?: (repoRoot: string) => { project: LessonStore; global: LessonStore };
   skillDir?: (repoRoot: string) => string | undefined;
+  /** Wait before resuming a job cut off by a service error. Default 60 000; tests use 0. */
+  infraRetryDelayMs?: number;
 }
 
 export class JobManager {

@@ -232,5 +232,31 @@ export async function executeJob(
         );
       }
     }
+
+    // A service hiccup (503 and the like) after real work: resume once instead of paying for a
+    // fresh run. The resume itself is not retried, and does not count as a strike.
+    if (
+      envelope.state === "error" &&
+      envelope.branch &&
+      INFRA_ERROR.test(envelope.reason ?? "") &&
+      !(await isInfraRetry(ctx, record))
+    ) {
+      await new Promise((r) => setTimeout(r, ctx.deps.infraRetryDelayMs ?? 60_000));
+      await ctx.startFollowup(
+        record,
+        "Continue the task; the previous run was cut off by a service error.",
+        true,
+      );
+    }
   }
+}
+
+const INFRA_ERROR = /UNAVAILABLE|code 50[0-4]|ECONNRESET/i;
+
+/** True when this job is itself the resume of a job that died of a service error. */
+async function isInfraRetry(ctx: ExecuteJobContext, record: JobRecord): Promise<boolean> {
+  if (!record.parentJobId) return false;
+  const parent = await ctx.deps.store.read(record.parentJobId);
+  const reason = parent?.envelope?.reason ?? parent?.errorReason ?? "";
+  return parent?.state === "error" && INFRA_ERROR.test(reason);
 }
