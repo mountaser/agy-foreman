@@ -73,7 +73,7 @@ export function renderBrief(i: BriefInput): string {
 
   // 4. <constraints>
   sections.push(
-    `<constraints>\n- Do not run git commit\n- Do not edit protected test files\n- Keep changes scoped to the task\n- Write and edit files with the file edit tools only; the shell cannot write files (no echo or Set-Content redirects, here-strings, python -c or node -e)\n- Do not run bash on Windows\n</constraints>`,
+    `<constraints>\n- Do not run git commit\n- Do not edit protected test files\n- Keep changes scoped to the task\n- Write and edit files only with write_to_file, replace_file_content or multi_replace_file_content (read with view_file); the shell cannot write files (no echo or Set-Content redirects, here-strings, python -c or node -e)\n- Do not run bash on Windows\n</constraints>`,
   );
 
   // 5. <verification> (implement only)

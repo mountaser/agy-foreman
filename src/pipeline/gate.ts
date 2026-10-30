@@ -280,7 +280,9 @@ export function decide(policy: GatePolicy, call: ToolCall): GateDecision {
         }
       } else {
         const isAllowedPrefix = policy.allowedCommands.some((cmd) =>
-          new RegExp(`^${escapeRegex(cmd)}\\b`, "i").test(seg),
+          // (?!\w), not \b: a command ending in "/" or "." (node --test test/, go test ./...)
+          // never has a word boundary after it, so \b rejected the project's own test command.
+          new RegExp(`^${escapeRegex(cmd)}(?!\\w)`, "i").test(seg),
         );
         const isOk = isAllowedPrefix || readOnly(seg);
         if (!isOk) {

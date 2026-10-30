@@ -245,3 +245,17 @@ describe("read-only probes", () => {
     expect(run(line)).toBe("deny");
   });
 });
+
+describe("allowed commands ending in a symbol", () => {
+  const pol = p({ allowedCommands: ["node --test test/", "go test ./..."] });
+  const run = (line: string) => d(pol, "run_command", { CommandLine: line });
+  it("allows the project's own test command and flags after it", () => {
+    expect(run("node --test test/")).toBe("auto_approve");
+    expect(run("go test ./...")).toBe("auto_approve");
+    expect(run("go test ./... -v")).toBe("auto_approve");
+  });
+  it("still refuses a longer word glued on and unrelated commands", () => {
+    expect(run("node --test test/evil")).toBe("deny");
+    expect(run("node --test other/")).toBe("deny");
+  });
+});

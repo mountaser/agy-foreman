@@ -2,6 +2,15 @@
 
 All notable changes to agy-foreman. Versions follow [semver](https://semver.org/); the newest is first.
 
+## 0.2.1 - 2026-10-30
+
+Two bugs found by the first live job on 0.2.0.
+
+### Fixed
+
+- **A project's own test command was refused by the gate when it ended in a symbol** (`node --test test/`, `go test ./...`): the allowlist match used a word boundary, which never exists after `/` or `.`. Gemini could not run the tests it was told to run.
+- **The brief now names the file tools** (`write_to_file`, `replace_file_content`, `multi_replace_file_content`, `view_file`). "File edit tools only" made Gemini try tool names the gate does not know (`edit_file`, `read_file`) and give up without editing anything.
+
 ## 0.2.0 - 2026-10-30
 
 This release makes delegation cheaper and its failures clearer, and moves the status line to [claude-gauges](https://github.com/mountaser/claude-gauges).

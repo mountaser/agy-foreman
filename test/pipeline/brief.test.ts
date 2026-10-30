@@ -85,7 +85,7 @@ describe("shell-write rule", () => {
       task: "t",
       date: "2026-10-30",
     } as never);
-    expect(text).toContain("file edit tools only");
+    expect(text).toContain("write_to_file, replace_file_content or multi_replace_file_content");
     expect(text).toContain("Do not run bash on Windows");
   });
 });
