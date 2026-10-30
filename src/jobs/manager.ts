@@ -4,7 +4,7 @@ import type { Envelope, JobSpec, PipelineDeps } from "../pipeline/index.js";
 import type { Approver } from "./approver.js";
 import type { FlagStore } from "./flags.js";
 import { compactRecord, firstOpenItem, isSamePath } from "./helpers.js";
-import { Ledger } from "./ledger.js";
+import { calibrationFromJobs, Ledger } from "./ledger.js";
 import { selectLessons, type Audience, type LessonStore } from "./lessons.js";
 import { renderProgressLine } from "./progress.js";
 import { isTerminal, type Estimate, type JobRecord, type JobStore } from "./store.js";
@@ -249,7 +249,7 @@ export class JobManager {
       0,
     );
     const today = await this.deps.ledger.stats(startOfToday);
-    const calibration = await this.deps.ledger.calibration();
+    const calibration = calibrationFromJobs(allJobs);
 
     let lessons: string[] = [];
     if (this.deps.lessons) {

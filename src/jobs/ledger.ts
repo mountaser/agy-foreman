@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Estimate } from "./store.js";
+import { isTerminal, type Estimate, type JobRecord } from "./store.js";
 import type { Incident } from "./incidents.js";
 
 export interface LedgerEntry {
@@ -69,33 +69,6 @@ export class Ledger {
     return values[mid];
   }
 
-  async calibration(): Promise<{ samples: number; ratio?: number }> {
-    const list = await this.entries();
-    const ratios = list
-      .filter(
-        (e) =>
-          e.estimate &&
-          typeof e.estimate.delegateOverheadTokens === "number" &&
-          e.estimate.delegateOverheadTokens > 0,
-      )
-      .map((e) => e.returnedTokens / e.estimate!.delegateOverheadTokens)
-      .sort((a, b) => a - b);
-
-    if (ratios.length === 0) {
-      return { samples: 0 };
-    }
-
-    const mid = Math.floor(ratios.length / 2);
-    let ratio: number;
-    if (ratios.length % 2 === 0) {
-      ratio = (ratios[mid - 1] + ratios[mid]) / 2;
-    } else {
-      ratio = ratios[mid];
-    }
-
-    return { samples: ratios.length, ratio };
-  }
-
   async stats(since: Date): Promise<{ jobs: number; passed: number; tokens: number }> {
     const list = await this.entries();
     const sinceMs = since.getTime();
@@ -105,4 +78,28 @@ export class Ledger {
     const tokens = relevant.reduce((sum, e) => sum + (e.usageTotal ?? 0), 0);
     return { jobs, passed, tokens };
   }
+}
+
+/**
+ * How the orchestrator's estimate of its own cost compares with what the jobs really returned to
+ * it: the median of (characters returned / 4) / delegateOverheadTokens over finished jobs.
+ * (The ledger's returnedTokens are Gemini output tokens, a different quantity.)
+ */
+export function calibrationFromJobs(
+  jobs: Pick<JobRecord, "state" | "estimate" | "returnedChars">[],
+): { samples: number; ratio?: number } {
+  const ratios = jobs
+    .filter(
+      (j) =>
+        isTerminal(j.state) &&
+        j.returnedChars > 0 &&
+        j.estimate &&
+        j.estimate.delegateOverheadTokens > 0,
+    )
+    .map((j) => j.returnedChars / 4 / j.estimate!.delegateOverheadTokens)
+    .sort((a, b) => a - b);
+  if (ratios.length === 0) return { samples: 0 };
+  const mid = Math.floor(ratios.length / 2);
+  const ratio = ratios.length % 2 === 0 ? (ratios[mid - 1] + ratios[mid]) / 2 : ratios[mid];
+  return { samples: ratios.length, ratio };
 }
