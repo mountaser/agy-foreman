@@ -1,6 +1,6 @@
 {
   "name": "agy-foreman",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Hand plan tasks from Claude Code to Gemini 3.8 Flash through the Antigravity CLI, and merge only what passes your tests.",
   "repository": {
     "type": "git",

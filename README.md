@@ -181,6 +181,10 @@ src/
 ├── agy/        run(request) → Outcome: spawns agy -p, parses stream-json, detects quota, kills the process tree
 ├── pipeline/   runJob(spec) → Envelope: worktree, contract tests, gate and hook, guard, verify, report
 ├── jobs/       JobManager: approval, token gate, queue, quota card, progress, ledger, lessons
+├── apply/      `apply`: write a plan step's full-code files, then run the tests
+├── snapshot/   builds and writes status.json for status lines
+├── gauges/     verified download and install of claude-gauges
+├── report.ts   `report`: what the jobs cost
 ├── server.ts   the four MCP tools
 └── cli.ts      serve, wait, watch, apply, report, statusline, init, doctor, install-skill
 skills/gemini-delegation/   the skill (SKILL.md and 7 references)

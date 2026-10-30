@@ -23,7 +23,7 @@ import { claudeSettingsPath, currentStatusLineCommand } from "./gauges/settings.
 import { PROMPT, MANUAL, parseChoice, type Choice } from "./gauges/text.js";
 import { quotaFile, refreshQuota, startQuotaRefresher } from "./usage-quota.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 const HELP = `agy-foreman ${VERSION}: hand plan tasks from Claude Code to Gemini, merge only what passes your tests
 
