@@ -77,7 +77,14 @@ export function summaryLines(rec: JobRecord): string[] {
       parts.push(`${count} file${count === 1 ? "" : "s"} changed`);
     }
   }
-  return [parts.join(" · "), `next: agy_get ${rec.id}`];
+  const lines = [parts.join(" · ")];
+  // A refused or errored job has no result worth a second call; the reason is the news.
+  const reason = rec.envelope?.reason ?? rec.errorReason;
+  if ((rec.state === "refused" || rec.state === "error") && reason) {
+    lines.push(`reason: ${reason}`);
+  }
+  lines.push(`next: agy_get ${rec.id}`);
+  return lines;
 }
 
 export function detectTestCommand(repoRoot: string): {

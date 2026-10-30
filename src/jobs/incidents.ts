@@ -3,6 +3,7 @@ import type { Envelope } from "../pipeline/index.js";
 export type IncidentCategory =
   | "brief_missing_context"
   | "wrong_or_missing_gate"
+  | "missing_config"
   | "scope_creep"
   | "protected_file_attempt"
   | "test_tampering"
@@ -83,7 +84,9 @@ export function classifyIncident(e: Envelope, o: { hadParent: boolean }): Incide
   if (e.state === "refused") {
     const reason = e.reason ?? "";
     let category: IncidentCategory;
-    if (/already pass/i.test(reason)) {
+    if (/^config\.test_command/.test(reason)) {
+      category = "missing_config";
+    } else if (/already pass/i.test(reason)) {
       category = "contract_too_weak";
     } else if (/skill/i.test(reason)) {
       category = "skill_mismatch";

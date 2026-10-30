@@ -267,3 +267,26 @@ describe("init and the status line", () => {
     expect(a.out.join("\n")).toContain("agy-foreman statusline");
   });
 });
+
+describe("summaryLines reasons", () => {
+  it("shows why a refused or errored job stopped", () => {
+    const refused = {
+      ...rec("t-r", "refused"),
+      envelope: { state: "refused", reason: "no config" },
+    };
+    expect(summaryLines(refused as never)).toEqual([
+      "t-r refused",
+      "reason: no config",
+      "next: agy_get t-r",
+    ]);
+    const errored = { ...rec("t-e", "error"), envelope: undefined, errorReason: "agy exploded" };
+    expect(summaryLines(errored as never)).toEqual([
+      "t-e error",
+      "reason: agy exploded",
+      "next: agy_get t-e",
+    ]);
+  });
+  it("adds no reason line for a passed job", () => {
+    expect(summaryLines(rec("t-p", "passed"))).toHaveLength(2);
+  });
+});

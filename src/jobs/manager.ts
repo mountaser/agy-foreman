@@ -48,6 +48,8 @@ export type StartResult =
       skills: { name: string; claudeOnlyRefs: string[] }[];
       contractTests: string[];
       redOnBase?: boolean;
+      /** Set when the real run would be refused (for example: no test_command). */
+      warning?: string;
     };
 
 export interface GetOptions {

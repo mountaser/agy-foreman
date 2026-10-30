@@ -448,3 +448,54 @@ describe("ledger usage", () => {
     expect(entry).toMatchObject({ state: "refused", usageTotal: 0 });
   });
 });
+
+describe("missing test_command", () => {
+  it("refuses at start with the config message, before any card or record", async () => {
+    const { MISSING_TEST_COMMAND } = await import("../../src/config.js");
+    const { m, repo, deps, approver } = setup({ config: { test_command: undefined } });
+    const r = await m.start({ repoRoot: repo, kind: "implement", task: "Fix it", estimate: EST });
+    expect(r).toEqual({ state: "refused", reason: MISSING_TEST_COMMAND });
+    expect(approver.calls).toEqual([]);
+    expect(await deps.store.list()).toEqual([]);
+  });
+
+  it("warns on a dry run", async () => {
+    const { MISSING_TEST_COMMAND } = await import("../../src/config.js");
+    const { m, repo } = setup({ config: { test_command: undefined } });
+    const r = await m.start({
+      repoRoot: repo,
+      kind: "implement",
+      task: "Fix it",
+      estimate: EST,
+      dryRun: true,
+    });
+    expect(r).toMatchObject({ state: "dry_run", warning: MISSING_TEST_COMMAND });
+  });
+
+  it("does not warn when test_command is set", async () => {
+    const { m, repo } = setup();
+    const r = await m.start({
+      repoRoot: repo,
+      kind: "implement",
+      task: "Fix it",
+      estimate: EST,
+      dryRun: true,
+    });
+    expect(r).not.toHaveProperty("warning");
+  });
+
+  it("discards a job that has no worktree, even when the main checkout is dirty", async () => {
+    const { m, repo } = setup({
+      result: (s) => envelope(s, "refused", { worktreePath: "/nowhere" }),
+    });
+    const r = await m.start({ repoRoot: repo, kind: "implement", task: "Fix it", estimate: EST });
+    await m.idle();
+    writeFileSync(path.join(repo, "a.txt"), "changed");
+    const out = await m.act({
+      action: "finalize",
+      jobId: (r as { jobId: string }).jobId,
+      mode: "discard",
+    });
+    expect(out).toMatchObject({ state: "discarded" });
+  });
+});

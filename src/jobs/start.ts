@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { buildArgs } from "../agy/run.js";
-import type { Config } from "../config.js";
+import { MISSING_TEST_COMMAND, type Config } from "../config.js";
 import { renderBrief, RUN_PROMPT } from "../pipeline/brief.js";
 import { addContractTests, redCheck, type ContractTest } from "../pipeline/contract.js";
 import type { JobSpec } from "../pipeline/index.js";
@@ -117,6 +117,11 @@ export async function prepareStartJob(
 
   // 4. Token gate (implement only, skipped on dry run)
   const config = deps.loadConfig(i.repoRoot);
+  // The pipeline refuses such a job in milliseconds; say so before an approval card is shown.
+  const missingTestCommand = i.kind === "implement" && !config.project.testCommand?.length;
+  if (missingTestCommand && !i.dryRun) {
+    return { type: "result", result: { state: "refused", reason: MISSING_TEST_COMMAND } };
+  }
   if (i.kind === "implement" && !i.dryRun) {
     const gateResult = tokenGate(i.estimate, config.project.refuseRatio);
     if (gateResult.refuse) {
@@ -210,6 +215,7 @@ export async function prepareStartJob(
         })),
         contractTests: contractTestPaths,
         ...(redOnBase !== undefined ? { redOnBase } : {}),
+        ...(missingTestCommand ? { warning: MISSING_TEST_COMMAND } : {}),
       },
     };
   }

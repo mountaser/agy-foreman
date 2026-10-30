@@ -115,7 +115,8 @@ export async function handleAct(
     if (!isTerminal(rec.state) || !rec.envelope?.branch) {
       return { state: "refused", reason: "job must be terminal with a branch" };
     }
-    const dirty = await isDirty(rec.repoRoot);
+    // Discarding never touches the main checkout, so a dirty tree is no reason to refuse it.
+    const dirty = i.mode === "discard" ? false : await isDirty(rec.repoRoot);
     if (dirty) {
       return { state: "refused", reason: "working tree is dirty" };
     }
@@ -131,7 +132,18 @@ export async function handleAct(
     };
 
     if (i.mode === "discard") {
-      await removeWorktree(wt, { deleteBranch: true });
+      try {
+        await removeWorktree(wt, { deleteBranch: true });
+      } catch (err) {
+        // A job refused before its worktree was made has nothing on disk to remove.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          !/is not a working tree|not a valid object|branch .* not found|No such file/i.test(msg)
+        ) {
+          throw err;
+        }
+        return { state: "discarded", note: "nothing to discard" };
+      }
       return { state: "discarded" };
     }
 

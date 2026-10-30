@@ -91,3 +91,10 @@ describe("classifyIncident", () => {
     expect(inc?.evidence).not.toContain("g > h");
   });
 });
+
+describe("missing config", () => {
+  it("labels the missing test_command refusal as missing_config", async () => {
+    const { MISSING_TEST_COMMAND } = await import("../../src/config.js");
+    expect(cat({ state: "refused", reason: MISSING_TEST_COMMAND })).toBe("missing_config");
+  });
+});
