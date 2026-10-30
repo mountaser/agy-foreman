@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,9 +9,14 @@ import { FlagStore } from "./jobs/flags.js";
 import { Ledger } from "./jobs/ledger.js";
 import { LessonStore } from "./jobs/lessons.js";
 import { JobManager, type JobManagerDeps } from "./jobs/manager.js";
+import { countPlanSteps } from "./jobs/plan.js";
 import { JobStore } from "./jobs/store.js";
-import { jobsDir, stateDir, worktreeRoot } from "./paths.js";
+import { jobsDir, stateDir, statusFile, worktreeRoot } from "./paths.js";
 import { runJob } from "./pipeline/index.js";
+import { repoHash } from "./pipeline/worktree.js";
+import { diffStat } from "./snapshot/diff.js";
+import { SnapshotWriter } from "./snapshot/writer.js";
+import { quotaFile, readQuotaCache } from "./usage-quota.js";
 
 export function hookBundlePath(): string {
   return path.join(path.dirname(fileURLToPath(import.meta.url)), "foreman-hook.js");
@@ -21,8 +26,26 @@ export function createRuntime(o: {
   cwd: string;
   env: NodeJS.ProcessEnv;
   approverFor: (gate: "elicitation" | "client") => Approver;
-}): { manager: JobManager; store: JobStore } {
-  const store = new JobStore(jobsDir({ env: o.env }));
+}): { manager: JobManager; store: JobStore; snapshot: SnapshotWriter } {
+  let snapshot: SnapshotWriter | undefined;
+  const store = new JobStore(jobsDir({ env: o.env }), (rec) => snapshot?.notify(rec));
+  snapshot = new SnapshotWriter({
+    file: statusFile({ env: o.env }),
+    listJobs: () => store.list(),
+    readQuota: () => readQuotaCache(quotaFile(o.env)),
+    liveDiff: (job) =>
+      diffStat(path.join(worktreeRoot({ env: o.env }), repoHash(job.repoRoot), job.id)),
+    planSteps: (planFile, repoRoot) => {
+      try {
+        return countPlanSteps(readFileSync(path.resolve(repoRoot, planFile), "utf8")) || undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    now: () => new Date(),
+    pid: process.pid,
+  });
+  snapshot.start();
   const sDir = stateDir({ env: o.env });
   const ledger = new Ledger(path.join(sDir, "ledger.jsonl"));
   const flags = new FlagStore(path.join(sDir, "flags.json"));
@@ -73,5 +96,5 @@ export function createRuntime(o: {
   };
 
   const manager = new JobManager(deps);
-  return { manager, store };
+  return { manager, store, snapshot };
 }

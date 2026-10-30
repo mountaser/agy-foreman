@@ -272,7 +272,15 @@ export async function prepareStartJob(
       : emptyProgress(),
     createdAt: deps.now().toISOString(),
     updatedAt: deps.now().toISOString(),
-    ...(i.plan ? { plan: { file: i.plan.file, step: i.plan.step } } : {}),
+    ...(i.plan
+      ? {
+          plan: {
+            file: i.plan.file,
+            step: i.plan.step,
+            ...(i.plan.delegateSteps?.length ? { delegateSteps: i.plan.delegateSteps } : {}),
+          },
+        }
+      : {}),
     ...(i.estimate ? { estimate: i.estimate } : {}),
     returnedChars: 0,
   };

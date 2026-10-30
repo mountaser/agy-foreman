@@ -12,6 +12,7 @@ import type { JobRecord } from "./store.js";
 import { firstOpenItem, isSamePath } from "./helpers.js";
 import type { JobManagerDeps } from "./manager.js";
 import { DelegationPolicy } from "./policy.js";
+import { activityFor } from "../snapshot/activity.js";
 
 export interface ExecuteJobContext {
   deps: JobManagerDeps;
@@ -70,6 +71,7 @@ export async function executeJob(
 
   const onPhase = (phase: "prepare" | "contract" | "brief" | "run" | "verify" | "report") => {
     record.progress.phase = phase;
+    if (phase !== "run") record.progress.activity = undefined;
     if (phase === "run" && !runStartTime) {
       runStartTime = ctx.deps.now();
     }
@@ -78,12 +80,27 @@ export async function executeJob(
 
   const onEvent = (ev: StreamEvent) => {
     let changed = false;
+    let activityChanged = false;
     if (ev.kind === "step") {
       if (ev.state === "DONE" || ev.state === "done") {
         record.progress.toolSteps++;
         changed = true;
       }
       const params = ev.toolParams;
+      const prev = record.progress.activity;
+      const activity = activityFor(
+        prev,
+        { toolName: ev.toolName, toolParams: params, state: ev.state },
+        ctx.deps.now(),
+      );
+      if (activity !== prev) {
+        record.progress.activity = activity;
+        changed = true;
+        // A change of what the job is doing is saved at once; the 500 ms throttle never retries.
+        if (activity?.kind !== prev?.kind || activity?.target !== prev?.target) {
+          activityChanged = true;
+        }
+      }
       const target = toolSubject(params);
       if (typeof target === "string") {
         let rel = target;
@@ -127,7 +144,7 @@ export async function executeJob(
       }
     }
     if (changed) {
-      updateProgressAndSave(false).catch(() => {});
+      updateProgressAndSave(activityChanged).catch(() => {});
     }
   };
 

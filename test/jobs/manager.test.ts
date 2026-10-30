@@ -41,6 +41,7 @@ function setup(
     result?: (spec: JobSpec) => Envelope;
     config?: object;
     fail?: string;
+    events?: (pd: PipelineDeps) => void | Promise<void>;
   } = {},
 ) {
   const state = mkdtempSync(path.join(os.tmpdir(), "foreman-mgr-"));
@@ -56,6 +57,7 @@ function setup(
     runJob: async (spec: JobSpec, pd: PipelineDeps) => {
       specs.push(spec);
       pd.onPhase?.("run");
+      await o.events?.(pd);
       if (o.fail) throw new Error(o.fail);
       await new Promise((r) => setTimeout(r, 20));
       return (o.result ?? ((s) => envelope(s, "passed")))(spec);
@@ -355,5 +357,36 @@ describe("pipeline errors", () => {
     const rec = await m.get((r as { jobId: string }).jobId);
     expect(rec?.state).toBe("error");
     expect(rec?.errorReason).toBe("agy exploded");
+  });
+});
+
+describe("job activity", () => {
+  it("records what the job is doing and saves every change at once", async () => {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const ev = (state: string, toolName?: string, toolParams?: Record<string, unknown>) => ({
+      kind: "step" as const,
+      stepIndex: 1,
+      state,
+      stepType: "tool",
+      toolName,
+      toolParams,
+    });
+    const seen: (string | undefined)[] = [];
+    const { m, repo, deps } = setup({
+      events: async (pd) => {
+        const kind = async () => (await deps.store.list())[0]?.progress.activity?.kind;
+        pd.onEvent?.(ev("ACTIVE", "view_file", { AbsolutePath: "/wt/brief.md" }));
+        await sleep(40);
+        seen.push(await kind());
+        // Both arrive inside the 500 ms progress throttle; the change must still be saved.
+        pd.onEvent?.(ev("DONE", "view_file"));
+        pd.onEvent?.(ev("ACTIVE", "run_command", { CommandLine: "go test ./..." }));
+        await sleep(40);
+        seen.push(await kind());
+      },
+    });
+    await m.start({ repoRoot: repo, kind: "implement", task: "Do it", estimate: EST });
+    await m.idle();
+    expect(seen).toEqual(["reading", "testing"]);
   });
 });
