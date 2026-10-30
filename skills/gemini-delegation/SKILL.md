@@ -33,6 +33,10 @@ The orchestrator writes contract tests up front, isolates work in an external gi
 7. **Quota Exhaustion**: If quota is hit, present the user with the quota card options: `Retry now`, `Continue without Gemini`, or `Wait for reset`. Never decide autonomously.
 8. **Learn from Every Failure**: After any failed run or task requiring follow-ups, reflect and record an actionable lesson using `agy_act(job_id, action: "lesson")`.
 
+## First time in a repo
+
+Commit `.agy-foreman.json` with `test_command`, `allowed_commands` and `protected_paths` before the first `agy_start` (`agy-foreman init` writes a starting point). Without a `test_command`, `agy_start` is refused with a message that says so; a dry run shows the same text as `warning`. On Windows do not start `test_command` with `bash` (it runs WSL's bash).
+
 ## Worked Example: End-to-End Plan Step Run
 
 ```text

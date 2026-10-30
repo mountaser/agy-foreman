@@ -14,6 +14,14 @@ Do **not** delegate:
 - **Interactive or ongoing debugging**: Tasks needing iterative conversational feedback with the user.
 - **Final review**: The orchestrator always conducts final code review.
 
+## Apply, do not delegate, steps that already hold their code
+
+If a plan step spells out its files and tests in full, Gemini would only retype them (in the first 61 jobs, 12 such passes cost about 3.8M Gemini tokens and 109 minutes). Run `agy-foreman apply <plan> <step>` instead: it writes the files and runs `test_command`. It creates files only and refuses anything ambiguous; in that case delegate the step or do it yourself.
+
+## Plans are written by the orchestrator
+
+Gemini does not write plans: a plan is design work and has no machine check. Use `explore` jobs to collect cited facts (exports, signatures, test names), then write the plan from them. Keep implementation bodies out of the plan where Gemini has real code to write, so the delegated step is work and not transcription.
+
 ## When to Delegate to Gemini 3.8 Flash
 
 Delegate tasks that satisfy these criteria:
@@ -25,7 +33,7 @@ Delegate tasks that satisfy these criteria:
 
 ## The Two Strikes Rule
 
-If Gemini 3.8 Flash fails a delegated task twice (or requires two rounds of corrective follow-ups without passing), **stop delegating that task**. Take the work back onto the orchestrator, or split the task into significantly smaller, simpler sub-tasks.
+If Gemini 3.8 Flash fails a delegated task twice (or requires two rounds of corrective follow-ups without passing), **stop delegating that task**. The result shows `attempt` and, on a failed second try, a hint. If a job shows no file edits after about five minutes, cancel it and do the work directly. Take the work back onto the orchestrator, or split the task into significantly smaller, simpler sub-tasks.
 
 ## Token Gate & Estimation
 

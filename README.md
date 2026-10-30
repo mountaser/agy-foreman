@@ -94,13 +94,15 @@ When a job fails, the failure is recorded as an incident and Claude writes a one
 
 ### CLI
 
-| Command                           | Purpose                           |
-| --------------------------------- | --------------------------------- |
-| `serve`                           | The MCP server (default)          |
-| `wait <job>`                      | Block until a job ends            |
-| `watch [job]`                     | Live progress in a terminal       |
-| `statusline`                      | Add the claude-gauges status line |
-| `init`, `doctor`, `install-skill` | Setup                             |
+| Command                           | Purpose                                                              |
+| --------------------------------- | -------------------------------------------------------------------- |
+| `serve`                           | The MCP server (default)                                             |
+| `wait <job>`                      | Block until a job ends                                               |
+| `watch [job]`                     | Live progress in a terminal                                          |
+| `apply <plan> <step>`             | Write a plan step's full-code files and run the tests (`--dry-run`)  |
+| `report`                          | What the jobs cost: states, tokens, incidents (`--since YYYY-MM-DD`) |
+| `statusline`                      | Add the claude-gauges status line                                    |
+| `init`, `doctor`, `install-skill` | Setup                                                                |
 
 ### Configuration
 
@@ -139,6 +141,15 @@ When a job fails, the failure is recorded as an incident and Claude writes a one
 | `allowed_mcp`, `web` | `[]`, `false` | MCP tools and web access for Gemini           |
 | `gate`               | `elicitation` | `client` if your client has no approval cards |
 
+### Saving tokens
+
+- **Steps that already contain their code.** If a plan step spells out the files and tests in full, do not delegate it: `agy-foreman apply <plan> <step>` writes the files and runs your `test_command`. It only creates files, and refuses anything ambiguous ("append to", two blocks for one path, a path that exists) without writing a byte.
+- **Repeat reads are short.** A second `agy_get` on a finished job returns a short record with `unchanged: true`; ask for `diff_mode` to get the full one. Denied commands are capped at five entries.
+- **Timeouts keep the work.** A timed-out run is still verified: the result is `timeout` with `partial: true` and a `verify` report, so finished work is visible. A run that goes quiet for 300 s (`AGY_STALL_SEC`) with no tool step running is stopped; if the tests pass it ends as `passed` ("ended early"). The default timeout is three times the median passed run, between 10 and 30 minutes, once ten jobs have passed.
+- **Second strike.** Each result carries `attempt`; a failed or timed-out second try adds a hint to take the work back.
+- **A service error (503 and the like)** after real work is resumed once automatically.
+- **`agy-foreman report`** shows where the tokens went.
+
 ### Status line
 
 agy-foreman does not draw its own status line. [claude-gauges](https://github.com/mountaser/claude-gauges) shows your jobs, the Gemini quota, your Claude limits and the cache timer under the Claude Code prompt, and reads the status file below. Run `agy-foreman statusline` to install it: it asks first, downloads the release for your system and checks its SHA-256. `agy-foreman statusline --manual` prints the install commands instead.
@@ -171,7 +182,7 @@ src/
 ├── pipeline/   runJob(spec) → Envelope: worktree, contract tests, gate and hook, guard, verify, report
 ├── jobs/       JobManager: approval, token gate, queue, quota card, progress, ledger, lessons
 ├── server.ts   the four MCP tools
-└── cli.ts      serve, wait, watch, statusline, init, doctor, install-skill
+└── cli.ts      serve, wait, watch, apply, report, statusline, init, doctor, install-skill
 skills/gemini-delegation/   the skill (SKILL.md and 7 references)
 ```
 

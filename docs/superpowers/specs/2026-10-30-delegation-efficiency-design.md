@@ -72,7 +72,7 @@ In this code "gate" is the command-permission hook (`gate.ts`); the test run is 
 
 ### 6. Retry visibility
 
-The job record carries `attempt: {n, max: 2}`, shown in the compact `agy_get` answer. `n` is 1 for a new job, the parent's `n` + 1 for a follow-up, and the earlier job's `n` + 1 for a new job on the same plan file and step after a `failed` or `timeout` job. Infrastructure errors, cancels, refusals and quota auto-follow-ups are not strikes. When `n` reaches 2 and the job did not pass, the answer adds `hint: "second strike: take this over or split it"`. Nothing is blocked.
+The job record carries `attempt` (a number, shown in the compact `agy_get` answer; the limit of 2 is in the hint text). `n` is 1 for a new job, the parent's `n` + 1 for a follow-up, and the earlier job's `n` + 1 for a new job on the same plan file and step after a `failed` or `timeout` job. Infrastructure errors, cancels, refusals and quota auto-follow-ups are not strikes. When `n` reaches 2 and the job did not pass, the answer adds `hint: "second strike: take this over or split it"`. Nothing is blocked.
 
 ### 7. Routing rules in the skill docs
 

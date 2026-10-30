@@ -2,6 +2,15 @@
 
 Spec: `docs/superpowers/specs/2026-10-30-delegation-efficiency-design.md`. Read the spec first.
 
+## Status (2026-10-30)
+
+Done and committed: Tasks 1 to 7 and Optional A to E. Notes on how they differ from the text below:
+
+- Tasks 3 (`apply`) and 8 (`report`) were first delegated to Gemini. Both runs spent 13 minutes and 130 to 150 tool steps fighting the gate's denial of shell file writes (which Optional A now prevents). The `report` job produced a correct `src/report.ts` (8/8 tests) before it was cancelled and its file was kept; the `apply` job produced a corrupt file and was discarded, so `src/apply/*` was written by the orchestrator against the same committed tests.
+- Task 6: `attempt` is stored and returned as a number; the limit of 2 appears in the hint.
+- Optional D: calibration is computed from job records (`calibrationFromJobs`), so no second ledger line is written.
+- Optional B: `medianRunSec` now counts passed jobs only (this also fixes the progress ETA).
+
 Conventions: TypeScript ESM with `.js` import suffixes, Prettier width 100, vitest. Tests live in `test/jobs/`, `test/pipeline/` and `test/` (match the folder of the module under test). Run `npm run test:ci`, `npm run typecheck` and `npm run format:check` after every task; run Prettier on every test file the orchestrator writes before committing it. Every task ends with a commit `feat: <what>` (or `fix:` / `docs:`).
 
 Vocabulary: "verify" is the test run in `verify()` (step 5 of `runImplementJob`). "Gate" in `src/pipeline/gate.ts` is the command-permission hook and is a different thing; this plan never uses "gate" for the test run.
