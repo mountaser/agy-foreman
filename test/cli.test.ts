@@ -290,3 +290,49 @@ describe("summaryLines reasons", () => {
     expect(summaryLines(rec("t-p", "passed"))).toHaveLength(2);
   });
 });
+
+describe("apply and report", () => {
+  const fence = "```";
+  const plan = [
+    "### Task 1: x",
+    "- Create: `src/a.js`",
+    fence + "js",
+    "module.exports = 1;",
+    fence,
+    "",
+  ].join("\n");
+
+  it("applies a plan step and runs the project's test command", async () => {
+    const { makeRepo } = await import("./pipeline/repo.js");
+    const repo = makeRepo({
+      "plan.md": plan,
+      ".agy-foreman.json": JSON.stringify({ test_command: ["node", "-e", "process.exit(0)"] }),
+    });
+    const a = io({}, repo);
+    expect(await main(["apply", "plan.md", "1"], a.i)).toBe(0);
+    expect(a.out.join("\n")).toContain("wrote src/a.js");
+    expect(a.out.join("\n")).toContain("tests passed");
+    expect(existsSync(path.join(repo, "src/a.js"))).toBe(true);
+  });
+
+  it("exits 1 and writes nothing for an ambiguous step, and 2 for bad usage", async () => {
+    const { makeRepo } = await import("./pipeline/repo.js");
+    const repo = makeRepo({
+      "plan.md": "### Task 1: x\nAppend to `src/a.js`:\n" + fence + "js\nx\n" + fence + "\n",
+      ".agy-foreman.json": JSON.stringify({ test_command: ["node", "-e", "process.exit(0)"] }),
+    });
+    const a = io({}, repo);
+    expect(await main(["apply", "plan.md", "1"], a.i)).toBe(1);
+    expect(a.err.join("\n")).toMatch(/ambiguous instruction: append/);
+    expect(existsSync(path.join(repo, "src/a.js"))).toBe(false);
+    expect(await main(["apply"], io({}, repo).i)).toBe(2);
+  });
+
+  it("prints a report from an empty state folder and rejects a bad date", async () => {
+    const state = mkdtempSync(path.join(os.tmpdir(), "foreman-rep-"));
+    const r = io({ FOREMAN_STATE_DIR: state });
+    expect(await main(["report"], r.i)).toBe(0);
+    expect(r.out.join("\n")).toBe("no jobs");
+    expect(await main(["report", "--since", "nope"], io({ FOREMAN_STATE_DIR: state }).i)).toBe(2);
+  });
+});

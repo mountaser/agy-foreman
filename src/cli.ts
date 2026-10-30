@@ -8,6 +8,9 @@ import { ClientModeApprover } from "./jobs/approver.js";
 import { renderProgressLine } from "./jobs/progress.js";
 import { isTerminal, JobStore, type JobRecord } from "./jobs/store.js";
 import { watchJob } from "./jobs/watch.js";
+import { applyStep } from "./apply/apply.js";
+import { Ledger } from "./jobs/ledger.js";
+import { buildReport } from "./report.js";
 import { jobsDir, stateDir } from "./paths.js";
 import { runCommand, type ExecResult } from "./pipeline/exec.js";
 import { createRuntime } from "./runtime.js";
@@ -32,6 +35,8 @@ Usage: agy-foreman <command>
   install-skill         install the delegation skill (--project for this repo only)
   wait <job>            block until a job ends (exit 0 passed, 1 failed, 2 quota, 3 error)
   watch [job]           show live progress
+  apply <plan> <step>   write the files a plan step spells out in full, then run the tests (--dry-run)
+  report                what the delegated jobs cost: states, tokens, incidents (--since YYYY-MM-DD)
   statusline            add the claude-gauges status line (--install, --manual, --force)
   --version, --help
 
@@ -321,6 +326,56 @@ export async function main(argv: string[], io: Io): Promise<number> {
       io.out(line);
     }
     return waitExitCode(rec.state);
+  }
+
+  if (cmd === "apply") {
+    const planFile = argv[1];
+    const step = Number(argv[2]);
+    if (!planFile || !Number.isInteger(step) || step < 1) {
+      io.err("usage: agy-foreman apply <plan-file> <step> [--dry-run]");
+      return 2;
+    }
+    const config = loadConfig({ repoRoot: io.cwd, env: io.env });
+    const result = await applyStep({
+      repoRoot: io.cwd,
+      planFile,
+      step,
+      dryRun: argv.includes("--dry-run"),
+      testCommand: config.project.testCommand,
+      run: async (command, cwd) => {
+        const r = await runCommand(command, { cwd });
+        return { code: r.code ?? 1, out: r.stdout + r.stderr };
+      },
+    });
+    for (const p of result.problems)
+      io.err(`apply: ${p.block > 0 ? `block ${p.block}: ` : ""}${p.reason}`);
+    for (const f of result.written)
+      io.out(`${argv.includes("--dry-run") ? "would write" : "wrote"} ${f}`);
+    if (result.testTail !== undefined) {
+      io.out(result.testTail.trimEnd());
+      io.out(result.ok ? "tests passed" : `tests failed (exit ${result.testExit})`);
+    }
+    return result.ok ? 0 : 1;
+  }
+
+  if (cmd === "report") {
+    const sinceIdx = argv.indexOf("--since");
+    const sinceText = sinceIdx !== -1 ? argv[sinceIdx + 1] : undefined;
+    const since = sinceText ? new Date(sinceText) : undefined;
+    if (since && Number.isNaN(since.getTime())) {
+      io.err("usage: agy-foreman report [--since YYYY-MM-DD]");
+      return 2;
+    }
+    const ledger = new Ledger(path.join(stateDir({ env: io.env }), "ledger.jsonl"));
+    const jobs = await new JobStore(jobsDir({ env: io.env })).list();
+    io.out(
+      buildReport(
+        await ledger.entries(),
+        jobs.map((j) => ({ id: j.id, returnedChars: j.returnedChars })),
+        { since },
+      ).trimEnd(),
+    );
+    return 0;
   }
 
   if (cmd === "watch") {
