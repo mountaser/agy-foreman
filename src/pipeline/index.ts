@@ -42,6 +42,9 @@ export interface PipelineDeps {
   onEvent?: (ev: StreamEvent) => void;
   onPhase?: (phase: "prepare" | "contract" | "brief" | "run" | "verify" | "report") => void;
   signal?: AbortSignal;
+  /** Stall detection overrides, for tests: how long without events, and how often to check. */
+  stallAfterMs?: number;
+  stallCheckMs?: number;
 }
 
 export interface Citation {
@@ -63,6 +66,8 @@ export interface Envelope {
   contract?: { redOnBase: boolean; greenAfter: boolean };
   verify?: VerifyReport;
   diffStat?: string;
+  /** True when the run did not finish by itself (timeout or stall) but its work was verified anyway. */
+  partial?: boolean;
   untrustedReport: string;
   deniedCommands: string[];
   /** Set by `agy_get` when it cut `deniedCommands` short: how many there were. */

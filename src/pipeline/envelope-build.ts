@@ -82,6 +82,7 @@ export interface BuildEnvelopeFields {
   contract?: { redOnBase: boolean; greenAfter: boolean };
   verify?: VerifyReport;
   diffStat?: string;
+  partial?: boolean;
   untrustedReport?: string;
   reportText?: string;
   nonce?: string;
@@ -159,6 +160,7 @@ export function buildEnvelope(
     ...(fields.contract ? { contract: fields.contract } : {}),
     ...(fields.verify ? { verify: fields.verify } : {}),
     ...(fields.diffStat !== undefined ? { diffStat: fields.diffStat } : {}),
+    ...(fields.partial ? { partial: true } : {}),
     untrustedReport,
     deniedCommands,
     guardEvents,

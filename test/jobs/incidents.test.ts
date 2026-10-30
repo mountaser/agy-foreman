@@ -63,7 +63,8 @@ describe("classifyIncident", () => {
   });
   it("maps quota, timeout, refusals and errors", () => {
     expect(cat({ state: "quota" })).toBe("quota");
-    expect(cat({ state: "timeout" })).toBe("timeout_too_short");
+    expect(cat({ state: "timeout" })).toBe("timeout_no_progress");
+    expect(cat({ state: "timeout", diffStat: " a.ts | 2 +-" })).toBe("timeout_with_work");
     expect(cat({ state: "refused", reason: "contract tests already pass on base" })).toBe(
       "contract_too_weak",
     );

@@ -88,7 +88,12 @@ describe("loadRuntimeConfig", () => {
       skipPermissions: false,
       sandbox: true,
       defaultTimeoutSec: 90,
+      stallAfterSec: 300,
     });
+  });
+  it("reads the stall time and falls back to 300s", () => {
+    expect(loadRuntimeConfig({ AGY_STALL_SEC: "120" }).stallAfterSec).toBe(120);
+    expect(loadRuntimeConfig({ AGY_STALL_SEC: "0" }).stallAfterSec).toBe(300);
   });
   it("falls back to 1800s for a bad timeout", () => {
     expect(loadRuntimeConfig({ AGY_TIMEOUT: "-3" }).defaultTimeoutSec).toBe(1800);

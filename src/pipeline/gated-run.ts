@@ -36,6 +36,8 @@ export interface GatedRunOutput {
   guardEvents: string[];
   skillsUsed: string[];
   nonce: string;
+  /** True when we stopped agy because it had gone quiet (not the user, not the timeout). */
+  stalled: boolean;
 }
 
 export type GatedRunResult = GatedRunOutput | Envelope;
@@ -171,27 +173,63 @@ export async function gatedRun(
       return g;
     };
 
-    const outcome = await deps.agyRun(
-      {
-        // A resumed conversation remembers the previous worktree's brief: point it at the new one.
-        prompt: spec.conversationId
-          ? resumePrompt(path.join(wt.path, ".agy-task", "brief.md"))
-          : (options.prompt ?? RUN_PROMPT),
-        cwd: wt.path,
-        model: spec.config.model,
-        effort: spec.effort ?? spec.config.effort,
-        mode: options.agyMode ?? (spec.kind === "explore" ? "plan" : "accept-edits"),
-        jsonSchemaPath,
-        timeoutSec: spec.timeoutSec,
-        conversationId: spec.conversationId,
-        agy: deps.agyCommand,
-        skipPermissions: false,
-        sandbox: spec.runtime.sandbox,
-        signal: deps.signal,
-        guard,
-      },
-      (ev) => deps.onEvent?.(ev),
-    );
+    // Stop a run that has gone quiet: no new step for stallAfterMs and no tool step still running
+    // (a long build is not a stall). The user's own cancel stays a cancel.
+    const stopper = new AbortController();
+    const forwardCancel = () => stopper.abort();
+    deps.signal?.addEventListener("abort", forwardCancel, { once: true });
+    if (deps.signal?.aborted) stopper.abort();
+    let stalled = false;
+    let lastEventAt = deps.now().getTime();
+    const openSteps = new Set<number>();
+    const afterMs = deps.stallAfterMs ?? spec.runtime.stallAfterSec * 1000;
+    const watcher = setInterval(() => {
+      const idle = deps.now().getTime() - lastEventAt;
+      if (openSteps.size === 0 && idle >= afterMs && !stopper.signal.aborted) {
+        stalled = true;
+        stopper.abort();
+      }
+    }, deps.stallCheckMs ?? 60_000);
+
+    let outcome: Awaited<ReturnType<typeof deps.agyRun>>;
+    try {
+      outcome = await deps.agyRun(
+        {
+          // A resumed conversation remembers the previous worktree's brief: point it at the new one.
+          prompt: spec.conversationId
+            ? resumePrompt(path.join(wt.path, ".agy-task", "brief.md"))
+            : (options.prompt ?? RUN_PROMPT),
+          cwd: wt.path,
+          model: spec.config.model,
+          effort: spec.effort ?? spec.config.effort,
+          mode: options.agyMode ?? (spec.kind === "explore" ? "plan" : "accept-edits"),
+          jsonSchemaPath,
+          timeoutSec: spec.timeoutSec,
+          conversationId: spec.conversationId,
+          agy: deps.agyCommand,
+          skipPermissions: false,
+          sandbox: spec.runtime.sandbox,
+          signal: stopper.signal,
+          guard,
+        },
+        (ev) => {
+          if (ev.kind === "step") {
+            lastEventAt = deps.now().getTime();
+            if (ev.toolName) {
+              if (/^(done|complete|completed|error|failed)$/i.test(ev.state)) {
+                openSteps.delete(ev.stepIndex);
+              } else {
+                openSteps.add(ev.stepIndex);
+              }
+            }
+          }
+          deps.onEvent?.(ev);
+        },
+      );
+    } finally {
+      clearInterval(watcher);
+      deps.signal?.removeEventListener("abort", forwardCancel);
+    }
 
     const nonce = randomBytes(4).toString("hex");
 
@@ -201,6 +239,7 @@ export async function gatedRun(
       guardEvents,
       skillsUsed,
       nonce,
+      stalled: stalled && !deps.signal?.aborted,
     };
   } catch (err: unknown) {
     try {

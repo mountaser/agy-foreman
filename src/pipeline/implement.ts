@@ -24,6 +24,9 @@ import {
 } from "./envelope-build.js";
 import { gatedRun } from "./gated-run.js";
 
+/** How long the tests may run on a timed-out worktree before we give up on them. */
+const POST_TIMEOUT_VERIFY_MS = 10 * 60_000;
+
 export async function runImplementJob(
   spec: JobSpec,
   deps: PipelineDeps,
@@ -155,18 +158,17 @@ export async function runImplementJob(
     let jobReason: string | undefined;
     let quotaData: { resetInSec?: number; resetText?: string } | undefined;
     let verifyReport: VerifyReport | undefined;
+    let partial = false;
 
     const failure = mapFailureOutcome(outcome, guardEvents);
-    if (failure) {
-      jobState = failure.jobState;
-      jobReason = failure.jobReason;
-      quotaData = failure.quotaData;
-    } else {
-      // 5. verify (on success only)
+    // Stopped by the stall watcher, not by the user: judge what it left behind.
+    const stalled = runResult.stalled && outcome.type === "cancelled";
+
+    // beforeRun always takes the snapshot before agy runs.
+    const verifyNow = async (timeoutMs: number): Promise<VerifyReport> => {
       deps.onPhase?.("verify");
-      // beforeRun always takes the snapshot before agy runs.
       if (!snapshot) throw new Error("internal: git snapshot missing before verify");
-      verifyReport = await verify({
+      return await verify({
         wt,
         protectedGlobs: [...spec.config.protectedPaths, ...contractPaths],
         testCommand,
@@ -174,9 +176,42 @@ export async function runImplementJob(
         baseline,
         snapshot,
         ignoreBranch: wt.branch ?? undefined,
-        timeoutMs: spec.timeoutSec * 1000,
+        timeoutMs,
         startSha,
       });
+    };
+    const hasChanges = async (): Promise<boolean> => {
+      try {
+        return (await git(["status", "--porcelain"], wt.path)).trim() !== "";
+      } catch {
+        return false;
+      }
+    };
+
+    if (stalled) {
+      verifyReport = await verifyNow(spec.timeoutSec * 1000);
+      if (contractInfo) contractInfo.greenAfter = verifyReport.passed;
+      if (verifyReport.passed) {
+        jobState = "passed";
+        jobReason = "ended early: no activity and verify passes";
+      } else {
+        jobState = "timeout";
+        jobReason = "stalled: no activity and verify fails";
+        partial = true;
+      }
+    } else if (failure) {
+      jobState = failure.jobState;
+      jobReason = failure.jobReason;
+      quotaData = failure.quotaData;
+      // A timeout often leaves finished work behind; run the tests so green work is visible.
+      if (failure.jobState === "timeout" && (await hasChanges())) {
+        verifyReport = await verifyNow(Math.min(spec.timeoutSec * 1000, POST_TIMEOUT_VERIFY_MS));
+        if (contractInfo) contractInfo.greenAfter = verifyReport.passed;
+        partial = true;
+      }
+    } else {
+      // 5. verify (on success only)
+      verifyReport = await verifyNow(spec.timeoutSec * 1000);
       if (contractInfo) {
         contractInfo.greenAfter = verifyReport.passed;
       }
@@ -235,6 +270,7 @@ export async function runImplementJob(
       contract: contractInfo,
       verify: verifyReport,
       diffStat: stat,
+      partial,
       untrustedReport,
       deniedCommands,
       guardEvents,

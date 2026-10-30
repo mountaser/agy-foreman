@@ -77,6 +77,8 @@ export interface RuntimeConfig {
   skipPermissions: boolean;
   sandbox: boolean;
   defaultTimeoutSec: number;
+  /** Seconds without a new tool step before a run counts as stalled. */
+  stallAfterSec: number;
 }
 
 export interface Config {
@@ -129,6 +131,7 @@ export function loadRuntimeConfig(
     skipPermissions: env.AGY_SKIP_PERMISSIONS === "true",
     sandbox: env.AGY_SANDBOX === "true",
     defaultTimeoutSec: positiveInt(env.AGY_TIMEOUT, 1800),
+    stallAfterSec: positiveInt(env.AGY_STALL_SEC, 300),
   };
 }
 

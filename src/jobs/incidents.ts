@@ -10,6 +10,8 @@ export type IncidentCategory =
   | "contract_too_weak"
   | "env_setup"
   | "timeout_too_short"
+  | "timeout_with_work"
+  | "timeout_no_progress"
   | "task_too_big"
   | "skill_mismatch"
   | "quota"
@@ -71,11 +73,12 @@ export function classifyIncident(e: Envelope, o: { hadParent: boolean }): Incide
     };
   }
 
-  // 7. timeout -> timeout_too_short.
+  // 7. timeout -> timeout_with_work when it left a diff, timeout_no_progress when it did not.
+  // (Both used to be timeout_too_short, which pointed at a longer timeout: the wrong fix.)
   if (e.state === "timeout") {
     const ev = e.reason ?? "timeout";
     return {
-      category: "timeout_too_short",
+      category: e.diffStat?.trim() ? "timeout_with_work" : "timeout_no_progress",
       evidence: ev.slice(0, 300),
     };
   }

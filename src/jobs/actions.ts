@@ -278,6 +278,8 @@ export async function handleAct(
         "cat:env_setup",
         "cat:agy_error",
         "cat:timeout_too_short",
+        "cat:timeout_with_work",
+        "cat:timeout_no_progress",
         "cat:quota",
       ]);
 
