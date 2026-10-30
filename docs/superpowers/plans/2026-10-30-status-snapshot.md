@@ -1272,12 +1272,13 @@ describe("SnapshotWriter", () => {
 
   it("turns several notifications into one write", async () => {
     vi.useFakeTimers();
-    const { w, state } = make([job()]);
+    const { w, state, written } = make([job()]);
     w.notify();
     w.notify();
     w.notify();
     await vi.advanceTimersByTimeAsync(250);
     expect(state.lists).toBe(1);
+    expect(written).toHaveLength(1);
   });
 
   it("rewrites every second while active", async () => {
@@ -1294,8 +1295,7 @@ describe("SnapshotWriter", () => {
   it("stops the heartbeat once a snapshot says nothing is active", async () => {
     vi.useFakeTimers();
     const rec = job();
-    const { w, written } = make([]);
-    w.notify(rec);
+    const { w, written } = make([rec]);
     w.start();
     await w.writeNow();
     rec.state = "passed";
