@@ -144,7 +144,12 @@ describe("buildSnapshot", () => {
             activity: { kind: "testing", at: "2026-10-30T14:29:00.000Z" },
           },
         }),
-        rec({ id: "queued", state: "queued", plan: plan(3, [2, 3, 6]), createdAt: "2026-10-30T14:22:00.000Z" }),
+        rec({
+          id: "queued",
+          state: "queued",
+          plan: plan(3, [2, 3, 6]),
+          createdAt: "2026-10-30T14:22:00.000Z",
+        }),
       ],
     });
     expect(s.plan?.steps).toEqual(["running", "queued", "running"]);
@@ -177,7 +182,12 @@ describe("buildSnapshot", () => {
       ...base,
       jobs: [
         rec({ id: "x", state: "failed", plan: plan(4, [4, 6]) }),
-        rec({ id: "x2", state: "passed", plan: plan(4, [4, 6]), createdAt: "2026-10-30T14:21:00.000Z" }),
+        rec({
+          id: "x2",
+          state: "passed",
+          plan: plan(4, [4, 6]),
+          createdAt: "2026-10-30T14:21:00.000Z",
+        }),
         rec({ id: "y", plan: plan(6, [4, 6]), createdAt: "2026-10-30T14:22:00.000Z" }),
       ],
     });
