@@ -266,6 +266,7 @@ export async function prepareStartJob(
 
   // 7. Create the record
   const jobId = newJobId(deps.now());
+  const attempt = await attemptFor(deps, i.repoRoot, i.plan);
   const record: JobRecord = {
     id: jobId,
     kind: i.kind,
@@ -288,6 +289,7 @@ export async function prepareStartJob(
         }
       : {}),
     ...(i.estimate ? { estimate: i.estimate } : {}),
+    ...(attempt > 1 ? { attempt } : {}),
     returnedChars: 0,
   };
 
@@ -314,4 +316,24 @@ export async function prepareStartJob(
     config,
     lessonsInjected: lessonsInjected.length,
   };
+}
+
+/**
+ * Which try this is: one more than the latest earlier job on the same plan step that ended failed
+ * or timed out. Errors, cancels and refusals are not strikes.
+ */
+async function attemptFor(
+  deps: JobManagerDeps,
+  repoRoot: string,
+  plan: { file: string; step: number } | undefined,
+): Promise<number> {
+  if (!plan) return 1;
+  const earlier = (await deps.store.list()).filter(
+    (j) =>
+      j.repoRoot === repoRoot &&
+      j.plan?.file === plan.file &&
+      j.plan.step === plan.step &&
+      (j.state === "failed" || j.state === "timeout"),
+  );
+  return Math.max(0, ...earlier.map((j) => j.attempt ?? 1)) + 1;
 }

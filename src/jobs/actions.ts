@@ -67,6 +67,8 @@ export async function startFollowup(
     createdAt: ctx.deps.now().toISOString(),
     updatedAt: ctx.deps.now().toISOString(),
     parentJobId: parent.id,
+    // A quota auto-follow-up resumes the same attempt; a follow-up the user asked for is a new one.
+    attempt: (parent.attempt ?? 1) + (bypassApproval ? 0 : 1),
     ...(parent.plan ? { plan: parent.plan } : {}),
     ...(parent.estimate ? { estimate: parent.estimate } : {}),
     returnedChars: 0,

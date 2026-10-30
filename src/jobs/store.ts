@@ -51,6 +51,8 @@ export interface JobRecord {
   plan?: { file: string; step: number; delegateSteps?: number[] };
   estimate?: Estimate;
   parentJobId?: string;
+  /** 1 for a first try; counts follow-ups and restarts of a failed or timed-out plan step. */
+  attempt?: number;
   envelope?: Envelope;
   returnedChars: number;
   incident?: Incident;

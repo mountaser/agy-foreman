@@ -20,7 +20,7 @@ export function firstOpenItem(markdown: string): string | undefined {
  * job drops the test-output tail; a failed one keeps its last 1500 chars. The untrusted report is
  * capped. (Found live: a passed job returned ~6k tokens, mostly test output.)
  */
-export function compactRecord(rec: JobRecord): JobRecord {
+export function compactRecord(rec: JobRecord): JobRecord & { hint?: string } {
   const e = rec.envelope;
   if (!e) return rec;
   const verify = e.verify
@@ -40,8 +40,12 @@ export function compactRecord(rec: JobRecord): JobRecord {
   const all = e.deniedCommands ?? [];
   const denied = all.map((c) => c.slice(0, 200));
   const cut = denied.length > 5 || all.some((c) => c.length > 200);
+  // Two tries have not fixed it; a third from the same brief will probably not either.
+  const secondStrike =
+    (rec.attempt ?? 1) >= 2 && (rec.state === "failed" || rec.state === "timeout");
   return {
     ...rec,
+    ...(secondStrike ? { hint: "second strike (attempt 2 of 2): take this over or split it" } : {}),
     envelope: {
       ...e,
       ...(verify ? { verify: verify as typeof e.verify } : {}),

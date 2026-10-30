@@ -549,3 +549,60 @@ describe("smaller agy_get", () => {
     await m.idle();
   });
 });
+
+describe("attempts", () => {
+  const startPlan = async (m: ReturnType<typeof setup>["m"], repo: string, step = 1) => {
+    const file = path.join(repo, "plan.md");
+    writeFileSync(file, PLAN);
+    const r = await m.start({
+      repoRoot: repo,
+      kind: "implement",
+      plan: { file, step },
+      estimate: EST,
+    });
+    await m.idle();
+    return (r as { jobId: string }).jobId;
+  };
+
+  it("counts a new job as the first try", async () => {
+    const { m, repo } = setup();
+    const id = await startPlan(m, repo);
+    expect((await m.get(id))?.attempt ?? 1).toBe(1);
+  });
+
+  it("makes a follow-up the second try, and a failed one carries the hint", async () => {
+    const { m, repo } = setup({ result: (s) => envelope(s, "failed") });
+    const id = await startPlan(m, repo);
+    const first = await m.get(id);
+    expect(first?.hint).toBeUndefined();
+    const f = await m.act({ action: "followup", jobId: id, feedback: "again" });
+    await m.idle();
+    const second = await m.get(f.jobId as string);
+    expect(second?.attempt).toBe(2);
+    expect(second?.hint).toMatch(/second strike/);
+  });
+
+  it("makes a fresh start of a failed plan step the second try", async () => {
+    const { m, repo } = setup({ result: (s) => envelope(s, "failed") });
+    await startPlan(m, repo);
+    const again = await startPlan(m, repo);
+    expect((await m.get(again))?.attempt).toBe(2);
+    const other = await startPlan(m, repo, 2);
+    expect((await m.get(other))?.attempt ?? 1).toBe(1);
+  });
+
+  it("does not count an error or a cancelled job as a strike", async () => {
+    const { m, repo } = setup({ fail: "agy exploded" });
+    await startPlan(m, repo);
+    const again = await startPlan(m, repo);
+    expect((await m.get(again))?.attempt ?? 1).toBe(1);
+  });
+
+  it("gives no hint to a passed job even on its second try", async () => {
+    const { m, repo, deps } = setup();
+    const id = await startPlan(m, repo);
+    const rec = (await deps.store.read(id))!;
+    await deps.store.write({ ...rec, attempt: 2 });
+    expect((await m.get(id))?.hint).toBeUndefined();
+  });
+});
