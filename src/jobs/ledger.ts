@@ -42,10 +42,22 @@ export class Ledger {
     }
   }
 
+  /** Median run time and count of the passed jobs of this kind (refusals and timeouts say nothing). */
+  async passedRunStats(
+    kind: "implement" | "explore",
+  ): Promise<{ median: number | undefined; count: number }> {
+    const list = await this.entries();
+    const count = list.filter(
+      (e) => e.kind === kind && e.state === "passed" && typeof e.runSec === "number",
+    ).length;
+    return { median: await this.medianRunSec(kind), count };
+  }
+
+  /** Median run time of passed jobs of this kind. */
   async medianRunSec(kind: "implement" | "explore"): Promise<number | undefined> {
     const list = await this.entries();
     const values = list
-      .filter((e) => e.kind === kind && typeof e.runSec === "number")
+      .filter((e) => e.kind === kind && e.state === "passed" && typeof e.runSec === "number")
       .map((e) => e.runSec!)
       .sort((a, b) => a - b);
 

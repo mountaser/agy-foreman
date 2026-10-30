@@ -46,7 +46,8 @@ describe("Ledger", () => {
       }),
     );
     expect((await l.entries()).length).toBe(3);
-    expect(await l.medianRunSec("implement")).toBe(200);
+    // Only the passed run counts; the failed 300 s one says nothing about how long a pass takes.
+    expect(await l.medianRunSec("implement")).toBe(100);
     expect(await l.medianRunSec("explore")).toBe(200);
     expect(await l.calibration()).toEqual({ samples: 2, ratio: 1.25 });
     expect(await l.stats(new Date("2026-10-17T00:00:00Z"))).toEqual({
@@ -54,5 +55,17 @@ describe("Ledger", () => {
       passed: 1,
       tokens: 0,
     });
+  });
+});
+
+describe("passedRunStats", () => {
+  it("counts and takes the median of passed runs only", async () => {
+    const l = new Ledger(path.join(mkdtempSync(path.join(os.tmpdir(), "foreman-led-")), "l.jsonl"));
+    await l.append(e({ runSec: 100, state: "passed" }));
+    await l.append(e({ runSec: 300, state: "passed" }));
+    await l.append(e({ runSec: 1800, state: "timeout" }));
+    await l.append(e({ runSec: 0.05, state: "refused" }));
+    expect(await l.passedRunStats("implement")).toEqual({ median: 200, count: 2 });
+    expect(await l.passedRunStats("explore")).toEqual({ median: undefined, count: 0 });
   });
 });

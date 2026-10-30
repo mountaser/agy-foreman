@@ -118,6 +118,8 @@ export async function prepareStartJob(
   // 4. Token gate (implement only, skipped on dry run)
   const config = deps.loadConfig(i.repoRoot);
   // The pipeline refuses such a job in milliseconds; say so before an approval card is shown.
+  const timeoutSec =
+    i.timeoutSec ?? (await defaultTimeoutSec(deps, i.kind, config.runtime.defaultTimeoutSec));
   const missingTestCommand = i.kind === "implement" && !config.project.testCommand?.length;
   if (missingTestCommand && !i.dryRun) {
     return { type: "result", result: { state: "refused", reason: MISSING_TEST_COMMAND } };
@@ -166,7 +168,7 @@ export async function prepareStartJob(
         model: config.project.model,
         effort: i.effort ?? config.project.effort,
         mode: i.kind === "explore" ? "plan" : "accept-edits",
-        timeoutSec: i.timeoutSec ?? config.runtime.defaultTimeoutSec,
+        timeoutSec,
         skipPermissions: config.runtime.skipPermissions,
         sandbox: config.runtime.sandbox,
         agy: deps.pipelineDeps.agyCommand,
@@ -192,11 +194,7 @@ export async function prepareStartJob(
       });
       try {
         await addContractTests(wt, contractTests);
-        const { red } = await redCheck(
-          wt,
-          config.project.testCommand,
-          (i.timeoutSec ?? config.runtime.defaultTimeoutSec) * 1000,
-        );
+        const { red } = await redCheck(wt, config.project.testCommand, timeoutSec * 1000);
         redOnBase = red;
       } finally {
         await removeWorktree(wt, { deleteBranch: true });
@@ -304,7 +302,7 @@ export async function prepareStartJob(
     ...(lessonsInjected.length > 0 ? { lessons: lessonsInjected } : {}),
     effort: i.effort ?? config.project.effort,
     baseRef: i.baseRef,
-    timeoutSec: i.timeoutSec ?? config.runtime.defaultTimeoutSec,
+    timeoutSec,
     config: config.project,
     runtime: config.runtime,
   };
@@ -336,4 +334,19 @@ async function attemptFor(
       (j.state === "failed" || j.state === "timeout"),
   );
   return Math.max(0, ...earlier.map((j) => j.attempt ?? 1)) + 1;
+}
+
+/**
+ * Three times the median passed run of this kind, between 10 and 30 minutes and never above the
+ * configured default. With fewer than 10 passed runs on record the default stands. (Two flat
+ * 30-minute timeouts burned 2.2M Gemini tokens while passed jobs averaged about 10 minutes.)
+ */
+async function defaultTimeoutSec(
+  deps: JobManagerDeps,
+  kind: "implement" | "explore",
+  configured: number,
+): Promise<number> {
+  const { median, count } = await deps.ledger.passedRunStats(kind);
+  if (median === undefined || count < 10) return configured;
+  return Math.min(configured, Math.min(1800, Math.max(600, Math.round(median * 3))));
 }

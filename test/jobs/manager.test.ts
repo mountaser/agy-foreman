@@ -606,3 +606,53 @@ describe("attempts", () => {
     expect((await m.get(id))?.hint).toBeUndefined();
   });
 });
+
+describe("default timeout", () => {
+  const seed = async (deps: JobManagerDeps, n: number, runSec: number) => {
+    for (let k = 0; k < n; k++) {
+      await deps.ledger.append({
+        jobId: `t-seed-${k}`,
+        kind: "implement",
+        state: "passed",
+        durationSec: runSec,
+        runSec,
+        returnedTokens: 0,
+        at: "2026-10-16T10:00:00Z",
+      });
+    }
+  };
+  const timeoutOf = async (
+    o: Parameters<typeof setup>[0],
+    n: number,
+    runSec: number,
+    t?: number,
+  ) => {
+    const { m, repo, deps, specs } = setup(o);
+    await seed(deps, n, runSec);
+    await m.start({
+      repoRoot: repo,
+      kind: "implement",
+      task: "Fix it",
+      estimate: EST,
+      ...(t ? { timeoutSec: t } : {}),
+    });
+    await m.idle();
+    return specs[0].timeoutSec;
+  };
+
+  it("keeps the configured default with fewer than 10 passed runs", async () => {
+    expect(await timeoutOf({}, 9, 100)).toBe(loadRuntimeConfig({}).defaultTimeoutSec);
+  });
+  it("uses three times the median once there are 10 passed runs", async () => {
+    expect(await timeoutOf({}, 10, 400)).toBe(1200);
+  });
+  it("keeps the result between 10 and 30 minutes", async () => {
+    expect(await timeoutOf({}, 10, 30)).toBe(600);
+    expect(await timeoutOf({}, 10, 5000)).toBe(
+      Math.min(1800, loadRuntimeConfig({}).defaultTimeoutSec),
+    );
+  });
+  it("lets an explicit timeout win", async () => {
+    expect(await timeoutOf({}, 10, 400, 900)).toBe(900);
+  });
+});
