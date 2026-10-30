@@ -82,9 +82,10 @@ describe("buildGatePolicy", () => {
 
 // Regression (found live): a resumed followup re-read the previous worktree's brief.
 describe("resumePrompt", () => {
-  it("names the new brief explicitly", () => {
-    expect(resumePrompt(String.raw`C:\wt\t-2\.agy-task\brief.md`)).toContain(
-      "C:/wt/t-2/.agy-task/brief.md",
-    );
+  it("names the new brief and the new working directory explicitly", () => {
+    const text = resumePrompt(String.raw`C:\wt\t-2\.agy-task\brief.md`);
+    expect(text).toContain("C:/wt/t-2/.agy-task/brief.md");
+    expect(text).toContain("working directory is now C:/wt/t-2.");
+    expect(text).toMatch(/earlier worktree path no longer exists/);
   });
 });

@@ -2,6 +2,16 @@
 
 All notable changes to agy-foreman. Versions follow [semver](https://semver.org/); the newest is first.
 
+## 0.2.3 - 2026-10-30
+
+Found by running every feature against a live agy 1.4.11.
+
+### Fixed
+
+- **A follow-up could not work.** The resumed Gemini conversation kept using the previous worktree's path and reported that it was "unable to switch", editing nothing. The resume prompt now names the new working directory and says the old path is gone.
+- **Explore jobs failed with "No parseable JSON" when Gemini added prose around the JSON** (it usually does). The JSON object is now found inside the reply: whole text, fenced block, or embedded.
+- **`apply` could write a step's code into the wrong file.** With several files listed (`- Create`, `- Test`), a bare code block was bound to the last listed file and the run reported green. Now a bare block in that situation is refused (name the file in a first-line comment), and a step is refused if any listed file has no block.
+
 ## 0.2.2 - 2026-10-30
 
 ### Fixed

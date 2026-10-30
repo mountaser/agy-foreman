@@ -12,11 +12,18 @@ export interface BriefInput {
 
 export const RUN_PROMPT: string = "Execute the task described in .agy-task/brief.md.";
 
-/** Prompt for a resumed conversation: it remembers the previous worktree's brief, so name the new one. */
+/**
+ * Prompt for a resumed conversation. The model remembers the previous worktree's absolute paths
+ * and tried to keep using them (found live on agy 1.4: it reported being "unable to switch" and
+ * edited nothing), so say where it is now and that the old path is gone.
+ */
 export function resumePrompt(briefPath: string): string {
+  const brief = briefPath.replace(/\\/g, "/");
+  const dir = brief.replace(/\/\.agy-task\/brief\.md$/, "");
   return (
-    `New instructions: read ${briefPath.replace(/\\/g, "/")} now. It replaces every earlier brief ` +
-    "and contains feedback on your previous attempt. Work only in this worktree and execute it."
+    `New instructions. Your working directory is now ${dir}. Every earlier worktree path no longer ` +
+    `exists: do not use it. Read ${brief} now; it replaces every earlier brief and contains ` +
+    `feedback on your previous attempt. Execute it inside ${dir} only.`
   );
 }
 
