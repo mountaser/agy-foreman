@@ -11,6 +11,9 @@ import {
   type Io,
 } from "../src/cli.js";
 import { JobStore, emptyProgress, type JobRecord } from "../src/jobs/store.js";
+import { createHash } from "node:crypto";
+import { assetName } from "../src/gauges/asset.js";
+import type { Fetch } from "../src/gauges/download.js";
 
 function io(env: NodeJS.ProcessEnv = {}, cwd = os.tmpdir()) {
   const out: string[] = [];
@@ -174,5 +177,93 @@ describe("help and version", () => {
     expect(out[0]).toBe(pkg.version);
     expect(await main(["--help"], io)).toBe(0);
     expect(out[1]).toContain("install-skill");
+  });
+});
+
+describe("statusline", () => {
+  it("prints the commands for --manual", async () => {
+    const a = io();
+    expect(await main(["statusline", "--manual"], a.i)).toBe(0);
+    const text = a.out.join("\n");
+    expect(text).toContain("install.sh | bash");
+    expect(text).toContain("install.ps1 | iex");
+  });
+
+  it("asks, and prints the commands when the answer is 2", async () => {
+    const a = io();
+    a.i.ask = async () => "2";
+    expect(await main(["statusline"], a.i)).toBe(0);
+    const text = a.out.join("\n");
+    expect(text).toContain("[1] Install claude-gauges");
+    expect(text).toContain("install.sh | bash");
+  });
+
+  it("skips on an empty answer and asks again on a bad one", async () => {
+    const answers = ["x", ""];
+    const a = io();
+    a.i.ask = async () => answers.shift() ?? "";
+    expect(await main(["statusline"], a.i)).toBe(0);
+    expect(a.err.join("\n")).toContain("Please type 1, 2 or 3.");
+    expect(a.out.join("\n")).toContain("Skipped.");
+  });
+
+  it("gives up after three bad answers", async () => {
+    const a = io();
+    a.i.ask = async () => "nope";
+    expect(await main(["statusline"], a.i)).toBe(1);
+  });
+
+  it("only shows the choices when there is no terminal", async () => {
+    const a = io();
+    expect(await main(["statusline"], a.i)).toBe(0);
+    expect(a.out.join("\n")).toContain("agy-foreman statusline --install | --manual");
+  });
+
+  it("installs with --install through the verified download", async () => {
+    const asset = assetName(process.platform, process.arch);
+    if (!asset) return;
+    const base = "https://github.com/mountaser/claude-gauges/releases/latest/download";
+    const sha = createHash("sha256").update("binary").digest("hex");
+    const files: Record<string, string> = {
+      [`${base}/checksums.txt`]: `${sha}  ${asset}\n`,
+      [`${base}/${asset}`]: "binary",
+    };
+    const fetch: Fetch = async (url) => ({
+      ok: url in files,
+      status: url in files ? 200 : 404,
+      arrayBuffer: async () => new TextEncoder().encode(files[url] ?? "").buffer as ArrayBuffer,
+      text: async () => files[url] ?? "",
+    });
+    const calls: string[][] = [];
+    const a = io({
+      FOREMAN_CLAUDE_SETTINGS: path.join(
+        mkdtempSync(path.join(os.tmpdir(), "foreman-nosettings-")),
+        "settings.json",
+      ),
+    });
+    a.i.gauges = {
+      fetch,
+      run: async (_exe, args) => {
+        calls.push(args);
+        return 0;
+      },
+    };
+    expect(await main(["statusline", "--install"], a.i)).toBe(0);
+    expect(calls).toEqual([["install"]]);
+    calls.length = 0;
+    expect(await main(["statusline", "--install", "--force"], a.i)).toBe(0);
+    expect(calls).toEqual([["install", "--force"]]);
+  });
+});
+
+describe("init and the status line", () => {
+  it("does not touch Claude Code's settings and points at the statusline command", async () => {
+    const repo = mkdtempSync(path.join(os.tmpdir(), "foreman-init2-"));
+    writeFileSync(path.join(repo, "go.mod"), "module x\n");
+    const settings = path.join(repo, "claude-settings.json");
+    const a = io({ FOREMAN_CLAUDE_SETTINGS: settings }, repo);
+    expect(await main(["init"], a.i)).toBe(0);
+    expect(existsSync(settings)).toBe(false);
+    expect(a.out.join("\n")).toContain("agy-foreman statusline");
   });
 });

@@ -12,17 +12,13 @@ import { jobsDir, stateDir } from "./paths.js";
 import { runCommand, type ExecResult } from "./pipeline/exec.js";
 import { createRuntime } from "./runtime.js";
 import { createServer, ElicitationApprover } from "./server.js";
-import { readStdin, statusLineText } from "./statusline-main.js";
-import {
-  claudeSettingsPath,
-  installStatusLine,
-  recentJobs,
-  uninstallStatusLine,
-  type InstallResult,
-} from "./statusline.js";
+import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import { installGauges, type InstallGaugesDeps } from "./gauges/install.js";
+import { claudeSettingsPath, currentStatusLineCommand } from "./gauges/settings.js";
+import { PROMPT, MANUAL, parseChoice, type Choice } from "./gauges/text.js";
 import { quotaFile, refreshQuota, startQuotaRefresher } from "./usage-quota.js";
-
-export { readStdin };
 
 export const VERSION = "0.1.0";
 
@@ -31,12 +27,12 @@ const HELP = `agy-foreman ${VERSION}: hand plan tasks from Claude Code to Gemini
 Usage: agy-foreman <command>
 
   serve                 run the MCP server over stdio (default)
-  init                  write .agy-foreman.json for this repo and install the status line
+  init                  write .agy-foreman.json for this repo
   doctor                check node, git, agy and the agy login
   install-skill         install the delegation skill (--project for this repo only)
   wait <job>            block until a job ends (exit 0 passed, 1 failed, 2 quota, 3 error)
   watch [job]           show live progress
-  statusline            print the status line (--install / --uninstall)
+  statusline            add the claude-gauges status line (--install, --manual, --force)
   --version, --help
 
 Docs: https://github.com/mountaser/agy-foreman`;
@@ -44,8 +40,10 @@ Docs: https://github.com/mountaser/agy-foreman`;
 export interface Io {
   out: (s: string) => void;
   err: (s: string) => void;
-  /** Reads piped stdin (statusline only); omitted in tests. */
-  stdin?: () => Promise<string>;
+  /** Asks one question in the terminal; omitted when there is no terminal. */
+  ask?: (question: string) => Promise<string>;
+  /** Replaces parts of the claude-gauges installer, for tests. */
+  gauges?: Partial<InstallGaugesDeps>;
   env: NodeJS.ProcessEnv;
   cwd: string;
 }
@@ -227,22 +225,24 @@ export async function doctor(d: {
   return checks;
 }
 
-function cliEntry(): string {
-  return fileURLToPath(import.meta.url);
-}
-
-function statusLineFiles(env: NodeJS.ProcessEnv): { settingsFile: string; wrapFile: string } {
+function defaultGaugesDeps(io: Io, currentCommand: string | undefined): InstallGaugesDeps {
   return {
-    settingsFile: claudeSettingsPath(env),
-    wrapFile: path.join(stateDir({ env }), "statusline-wrap.json"),
+    fetch: (url) => fetch(url),
+    platform: process.platform,
+    arch: process.arch,
+    mkTmp: () => mkdtemp(path.join(os.tmpdir(), "claude-gauges-")),
+    rmTmp: (dir) => rm(dir, { recursive: true, force: true }),
+    run: (exe, args) =>
+      new Promise((resolve) => {
+        const child = spawn(exe, args, { stdio: "inherit" });
+        child.on("error", () => resolve(1));
+        child.on("close", (code) => resolve(code ?? 1));
+      }),
+    out: io.out,
+    err: io.err,
+    currentCommand,
+    ...io.gauges,
   };
-}
-
-function describeInstall(r: InstallResult): string {
-  if (r.state === "already_installed") return `status line: already installed (${r.settings})`;
-  if (r.state === "wrapped")
-    return `status line: installed in ${r.settings}, shown after your existing one (${r.previous})`;
-  return `status line: installed in ${r.settings} (restart Claude Code to see it; remove with: agy-foreman statusline --uninstall)`;
 }
 
 export async function main(argv: string[], io: Io): Promise<number> {
@@ -278,7 +278,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
     const quota = startQuotaRefresher({
       file: quotaFile(io.env),
       isActive: async () =>
-        (await recentJobs(jobsDir({ env: io.env }))).some((j) => !isTerminal(j.state)),
+        (await new JobStore(jobsDir({ env: io.env })).list()).some((j) => !isTerminal(j.state)),
       refresh: () =>
         refreshQuota({ agyPath: loadRuntimeConfig(io.env).agyPath, file: quotaFile(io.env) }),
     });
@@ -341,23 +341,34 @@ export async function main(argv: string[], io: Io): Promise<number> {
   }
 
   if (cmd === "statusline") {
-    const files = statusLineFiles(io.env);
-    if (argv.includes("--install")) {
-      io.out(describeInstall(await installStatusLine({ ...files, entry: cliEntry() })));
+    const force = argv.includes("--force");
+    let choice: Choice | undefined = argv.includes("--install")
+      ? "install"
+      : argv.includes("--manual")
+        ? "manual"
+        : undefined;
+    if (!choice) {
+      io.out(PROMPT);
+      if (!io.ask) {
+        io.out("Choose with: agy-foreman statusline --install | --manual");
+        return 0;
+      }
+      for (let tries = 0; tries < 3 && !choice; tries++) {
+        choice = parseChoice(await io.ask("Choose 1, 2 or 3: "));
+        if (!choice) io.err("Please type 1, 2 or 3.");
+      }
+      if (!choice) return 1;
+    }
+    if (choice === "manual") {
+      io.out(MANUAL);
       return 0;
     }
-    if (argv.includes("--uninstall")) {
-      io.out(`status line: ${await uninstallStatusLine(files)}`);
+    if (choice === "skip") {
+      io.out("Skipped. Run agy-foreman statusline any time.");
       return 0;
     }
-    // Same output as the slim dist/statusline.js that Claude Code runs.
-    const text = await statusLineText({
-      env: io.env,
-      cwd: io.cwd,
-      stdin: io.stdin ? await io.stdin() : "",
-    });
-    if (text) io.out(text);
-    return 0;
+    const current = await currentStatusLineCommand(claudeSettingsPath(io.env));
+    return installGauges(defaultGaugesDeps(io, current), { force });
   }
 
   if (cmd === "init") {
@@ -369,15 +380,9 @@ export async function main(argv: string[], io: Io): Promise<number> {
     const detected = detectTestCommand(io.cwd);
     writeFileSync(targetFile, JSON.stringify(detected, null, 2) + "\n", "utf8");
     io.out("Register with Claude Code:\n  claude mcp add agy-foreman -- npx -y agy-foreman serve");
-    // The status line is on by default; it only touches Claude Code settings when a home dir is known.
-    if (
-      !argv.includes("--no-statusline") &&
-      (io.env.FOREMAN_CLAUDE_SETTINGS || io.env.USERPROFILE || io.env.HOME)
-    ) {
-      io.out(
-        describeInstall(await installStatusLine({ ...statusLineFiles(io.env), entry: cliEntry() })),
-      );
-    }
+    io.out(
+      "Status line: run agy-foreman statusline to add claude-gauges (jobs, Gemini quota, Claude limits, cache timer).",
+    );
     return 0;
   }
 

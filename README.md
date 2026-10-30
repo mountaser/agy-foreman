@@ -99,7 +99,7 @@ When a job fails, the failure is recorded as an incident and Claude writes a one
 | `serve`                           | The MCP server (default)          |
 | `wait <job>`                      | Block until a job ends            |
 | `watch [job]`                     | Live progress in a terminal       |
-| `statusline`                      | Install or remove the status line |
+| `statusline`                      | Add the claude-gauges status line |
 | `init`, `doctor`, `install-skill` | Setup                             |
 
 ### Configuration
@@ -139,6 +139,10 @@ When a job fails, the failure is recorded as an incident and Claude writes a one
 | `allowed_mcp`, `web` | `[]`, `false` | MCP tools and web access for Gemini           |
 | `gate`               | `elicitation` | `client` if your client has no approval cards |
 
+### Status line
+
+agy-foreman does not draw its own status line. [claude-gauges](https://github.com/mountaser/claude-gauges) shows your jobs, the Gemini quota, your Claude limits and the cache timer under the Claude Code prompt, and reads the status file below. Run `agy-foreman statusline` to install it: it asks first, downloads the release for your system and checks its SHA-256. `agy-foreman statusline --manual` prints the install commands instead.
+
 ### Status file
 
 While jobs run, agy-foreman keeps `status.json` in its state folder up to date (`%LOCALAPPDATA%gy-foreman` on Windows). Status lines can read it to show progress; the format is described in [docs/superpowers/specs/2026-10-30-status-snapshot-design.md](docs/superpowers/specs/2026-10-30-status-snapshot-design.md).
@@ -167,8 +171,7 @@ src/
 ├── pipeline/   runJob(spec) → Envelope: worktree, contract tests, gate and hook, guard, verify, report
 ├── jobs/       JobManager: approval, token gate, queue, quota card, progress, ledger, lessons
 ├── server.ts   the four MCP tools
-├── cli.ts      serve, wait, watch, statusline, init, doctor, install-skill
-└── statusline.ts
+└── cli.ts      serve, wait, watch, statusline, init, doctor, install-skill
 skills/gemini-delegation/   the skill (SKILL.md and 7 references)
 ```
 

@@ -4,7 +4,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     "foreman-hook": "src/pipeline/hook-entry.ts",
-    statusline: "src/statusline-main.ts",
+    statusline: "src/statusline-stub.ts",
   },
   format: ["esm"],
   target: "node20",

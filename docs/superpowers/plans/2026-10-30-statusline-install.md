@@ -777,7 +777,7 @@ describe("statusline", () => {
       text: async () => files[url] ?? "",
     });
     const calls: string[][] = [];
-    const a = io({ FOREMAN_CLAUDE_SETTINGS: path.join(os.tmpdir(), "no-such-settings.json") });
+    const a = io({ FOREMAN_CLAUDE_SETTINGS: path.join(mkdtempSync(path.join(os.tmpdir(), "foreman-nosettings-")), "settings.json") });
     a.i.gauges = {
       fetch,
       run: async (_exe, args) => {
