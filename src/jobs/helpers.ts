@@ -36,12 +36,18 @@ export function compactRecord(rec: JobRecord): JobRecord {
           e.untrustedReport.slice(e.untrustedReport.lastIndexOf("<<<END")),
         ].join("\n")
       : e.untrustedReport;
+  // Denied commands can hold whole pasted file bodies; the first few show the pattern.
+  const all = e.deniedCommands ?? [];
+  const denied = all.map((c) => c.slice(0, 200));
+  const cut = denied.length > 5 || all.some((c) => c.length > 200);
   return {
     ...rec,
     envelope: {
       ...e,
       ...(verify ? { verify: verify as typeof e.verify } : {}),
       untrustedReport: report,
+      deniedCommands: denied.slice(0, 5),
+      ...(cut ? { deniedCommandsTotal: all.length } : {}),
     },
   };
 }

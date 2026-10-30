@@ -7,7 +7,7 @@ import { compactRecord, firstOpenItem, isSamePath } from "./helpers.js";
 import { Ledger } from "./ledger.js";
 import { selectLessons, type Audience, type LessonStore } from "./lessons.js";
 import { renderProgressLine } from "./progress.js";
-import { type Estimate, type JobRecord, type JobStore } from "./store.js";
+import { isTerminal, type Estimate, type JobRecord, type JobStore } from "./store.js";
 import { watchJob } from "./watch.js";
 import { prepareStartJob } from "./start.js";
 import { executeJob } from "./execute.js";
@@ -52,6 +52,8 @@ export type StartResult =
       warning?: string;
     };
 
+export type GetResult = JobRecord & { diff?: string; unchanged?: boolean; hint?: string };
+
 export interface GetOptions {
   waitSec?: number;
   diffMode?: "stat" | "full" | "paths";
@@ -90,6 +92,8 @@ export interface JobManagerDeps {
 
 export class JobManager {
   private scheduler: JobScheduler;
+  /** The state and update time `get` last returned in full for each finished job. */
+  private lastGet = new Map<string, string>();
   private policy: DelegationPolicy;
   private grants: PlanGrants;
 
@@ -158,12 +162,28 @@ export class JobManager {
     return compactRecord(rec);
   }
 
-  async get(jobId: string, o?: GetOptions): Promise<(JobRecord & { diff?: string }) | undefined> {
+  async get(jobId: string, o?: GetOptions): Promise<GetResult | undefined> {
     const rec =
       o?.waitSec && o.waitSec > 0
         ? await watchJob(this.deps.store, jobId, { timeoutMs: o.waitSec * 1000 })
         : await this.deps.store.read(jobId);
     if (!rec) return undefined;
+
+    // A finished job does not change; a repeat read costs the orchestrator the full record again.
+    const seen = `${rec.state}|${rec.updatedAt}`;
+    if (isTerminal(rec.state) && !o?.diffMode && this.lastGet.get(jobId) === seen) {
+      // Same record without the result: state and progress stay, the bulky envelope goes.
+      const short: GetResult = {
+        ...rec,
+        envelope: undefined,
+        unchanged: true,
+        hint: 'use diff_mode: "stat" or "paths" for more',
+      };
+      rec.returnedChars = (rec.returnedChars ?? 0) + JSON.stringify(short).length;
+      await this.scheduler.write(rec);
+      return short;
+    }
+    if (isTerminal(rec.state)) this.lastGet.set(jobId, seen);
 
     let diff: string | undefined;
     if (o?.diffMode === "stat") {

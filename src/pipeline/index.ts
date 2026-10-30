@@ -65,6 +65,8 @@ export interface Envelope {
   diffStat?: string;
   untrustedReport: string;
   deniedCommands: string[];
+  /** Set by `agy_get` when it cut `deniedCommands` short: how many there were. */
+  deniedCommandsTotal?: number;
   guardEvents: string[];
   skillsUsed: string[];
   explore?: {

@@ -499,3 +499,53 @@ describe("missing test_command", () => {
     expect(out).toMatchObject({ state: "discarded" });
   });
 });
+
+describe("smaller agy_get", () => {
+  it("caps denied commands and says how many there were", async () => {
+    const { compactRecord } = await import("../../src/jobs/manager.js");
+    const base = { id: "t-1", state: "failed", progress: {}, returnedChars: 0 };
+    const long = Array.from({ length: 12 }, (_, i) => `Set-Content f${i} ` + "x".repeat(500));
+    const c = compactRecord({
+      ...base,
+      envelope: { state: "failed", untrustedReport: "", deniedCommands: long },
+    } as never);
+    expect(c.envelope!.deniedCommands).toHaveLength(5);
+    expect(c.envelope!.deniedCommands.every((d) => d.length <= 200)).toBe(true);
+    expect(c.envelope!.deniedCommandsTotal).toBe(12);
+
+    const few = compactRecord({
+      ...base,
+      envelope: { state: "failed", untrustedReport: "", deniedCommands: ["git push", "rm -rf x"] },
+    } as never);
+    expect(few.envelope!.deniedCommands).toEqual(["git push", "rm -rf x"]);
+    expect(few.envelope!.deniedCommandsTotal).toBeUndefined();
+  });
+
+  it("answers a repeat read of a finished job with a short record", async () => {
+    const { m, repo } = setup();
+    const r = await m.start({ repoRoot: repo, kind: "implement", task: "Fix it", estimate: EST });
+    await m.idle();
+    const id = (r as { jobId: string }).jobId;
+    const first = await m.get(id);
+    expect(first?.envelope).toBeDefined();
+    expect(first?.unchanged).toBeUndefined();
+    const again = await m.get(id);
+    expect(again).toMatchObject({ id, state: "passed", unchanged: true });
+    expect(again?.envelope).toBeUndefined();
+    expect(again?.hint).toMatch(/diff_mode/);
+    // Asking for a diff always returns the full record.
+    const stat = await m.get(id, { diffMode: "stat" });
+    expect(stat?.envelope).toBeDefined();
+    expect(stat?.unchanged).toBeUndefined();
+  });
+
+  it("never calls a running job unchanged", async () => {
+    const { m, repo } = setup({ events: () => new Promise((r) => setTimeout(r, 300)) });
+    const r = await m.start({ repoRoot: repo, kind: "implement", task: "Fix it", estimate: EST });
+    const id = (r as { jobId: string }).jobId;
+    await m.get(id);
+    const again = await m.get(id);
+    expect(again?.unchanged).toBeUndefined();
+    await m.idle();
+  });
+});
