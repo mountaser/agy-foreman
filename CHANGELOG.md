@@ -2,6 +2,13 @@
 
 All notable changes to agy-foreman. Versions follow [semver](https://semver.org/); the newest is first.
 
+## 0.2.2 - 2026-10-30
+
+### Fixed
+
+- **Works with agy 1.4.** The agy CLI renamed its file tools (`write_to_file` to `write_file`, `replace_file_content` to `edit_file`, `view_file` to `read_file`), and the gate denied every one of them, so Gemini could not edit or read a single file. The gate now handles both generations with the same rules (inside the worktree, not protected, not `.git`). A write tool that sends no recognisable path is denied with a message that lists the argument names it did send, so the next rename is easy to map. The status file and progress tracking recognise the new names too.
+- The brief names both sets of file tools.
+
 ## 0.2.1 - 2026-10-30
 
 Two bugs found by the first live job on 0.2.0.

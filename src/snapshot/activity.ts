@@ -5,7 +5,18 @@ import type { Activity, ActivityKind } from "./types.js";
 const TEST_COMMAND =
   /(^|&&|;|\||\()\s*(go\s+(test|vet)|gofmt|npm\s+(run\s+)?test|npx\s+(vitest|tsc|prettier)|vitest|pytest|cargo\s+test|tsc|prettier)\b/i;
 
-const PATH_KEYS = ["TargetFile", "AbsolutePath", "DirectoryPath", "SearchDirectory", "SearchPath"];
+const PATH_KEYS = [
+  "TargetFile",
+  "AbsolutePath",
+  "FilePath",
+  "file_path",
+  "filePath",
+  "path",
+  "Path",
+  "DirectoryPath",
+  "SearchDirectory",
+  "SearchPath",
+];
 
 function baseName(p: string): string {
   const parts = p.split(/[\\/]/).filter(Boolean);

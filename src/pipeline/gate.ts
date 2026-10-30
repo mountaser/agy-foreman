@@ -165,22 +165,53 @@ export function splitCommandSegments(cmdLine: string): string[] {
   return out.map((x) => x.trim()).filter(Boolean);
 }
 
+// agy 1.4 renamed its file tools (write_to_file -> write_file, replace_file_content -> edit_file,
+// view_file -> read_file); both generations are gated the same way.
+const WRITE_TOOLS = new Set([
+  "write_to_file",
+  "replace_file_content",
+  "multi_replace_file_content",
+  "write_file",
+  "edit_file",
+]);
+const READ_TOOLS = new Set(["view_file", "list_dir", "find_by_name", "grep_search", "read_file"]);
+/** Argument names that carry a file path, in the order they are tried. */
+const PATH_KEYS = [
+  "TargetFile",
+  "AbsolutePath",
+  "FilePath",
+  "file_path",
+  "filePath",
+  "path",
+  "Path",
+  "target_file",
+  "file",
+];
+
+function firstString(args: Record<string, unknown>, keys: readonly string[]): string | undefined {
+  for (const k of keys) {
+    const v = args[k];
+    if (typeof v === "string" && v.trim() !== "") return v;
+  }
+  return undefined;
+}
+
 export function decide(policy: GatePolicy, call: ToolCall): GateDecision {
   const name = call.name;
   const args = call.args ?? {};
 
   // 2. Writes
-  if (
-    name === "write_to_file" ||
-    name === "replace_file_content" ||
-    name === "multi_replace_file_content"
-  ) {
+  if (WRITE_TOOLS.has(name)) {
     if (policy.mode === "explore") {
       return { decision: "deny", reason: "Writes are not allowed in explore mode." };
     }
-    const targetFile = args.TargetFile;
-    if (typeof targetFile !== "string" || !targetFile.trim()) {
-      return { decision: "deny", reason: "TargetFile is required." };
+    const targetFile = firstString(args, PATH_KEYS);
+    if (targetFile === undefined) {
+      // Fail closed, but say which keys the tool sent so a new agy version is easy to map.
+      return {
+        decision: "deny",
+        reason: `${name}: no file path in its arguments (keys: ${Object.keys(args).join(", ") || "none"}).`,
+      };
     }
     const resolved = resolveTarget(policy.worktree, targetFile);
     if (!isInside(policy.worktree, resolved)) {
@@ -212,17 +243,19 @@ export function decide(policy: GatePolicy, call: ToolCall): GateDecision {
   }
 
   // 3. Reads
-  if (
-    name === "view_file" ||
-    name === "list_dir" ||
-    name === "find_by_name" ||
-    name === "grep_search"
-  ) {
-    const p = args.AbsolutePath ?? args.DirectoryPath ?? args.SearchDirectory ?? args.SearchPath;
-    if (p === undefined || p === null || String(p).trim() === "") {
+  if (READ_TOOLS.has(name)) {
+    const p = firstString(args, [
+      ...PATH_KEYS,
+      "DirectoryPath",
+      "SearchDirectory",
+      "SearchPath",
+      "directory",
+      "dir",
+    ]);
+    if (p === undefined) {
       return { decision: "auto_approve" };
     }
-    const resolved = resolveTarget(policy.worktree, String(p));
+    const resolved = resolveTarget(policy.worktree, p);
     const insideWorktree = isInside(policy.worktree, resolved);
     const insideReadOnly = policy.readOnlyDirs.some((dir) => isInside(dir, resolved));
     if (insideWorktree || insideReadOnly) {

@@ -118,7 +118,10 @@ export async function executeJob(
         changed = true;
       }
       // Gemini ticks the checklist with write_to_file or (more often) replace_file_content.
-      if (ev.toolName && /write_to_file|replace_file_content/.test(ev.toolName)) {
+      if (
+        ev.toolName &&
+        /write_to_file|replace_file_content|write_file|edit_file/.test(ev.toolName)
+      ) {
         const progressFile = path.join(worktreePath, ".agy-task", "progress.md");
         const target = params?.TargetFile ?? params?.targetFile;
         if (

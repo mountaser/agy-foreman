@@ -259,3 +259,27 @@ describe("allowed commands ending in a symbol", () => {
     expect(run("node --test other/")).toBe("deny");
   });
 });
+
+describe("agy 1.4 file tools", () => {
+  it("gates edit_file and write_file like the old write tools", () => {
+    for (const name of ["edit_file", "write_file"]) {
+      expect(d(p(), name, { path: "src/a.ts", content: "x" })).toBe("auto_approve");
+      expect(d(p(), name, { TargetFile: path.join(WT, "src", "a.ts") })).toBe("auto_approve");
+      expect(d(p(), name, { path: "tests/a.ts" })).toBe("deny");
+      expect(d(p(), name, { path: "../outside.ts" })).toBe("deny");
+      expect(d(p(), name, { path: ".git/config" })).toBe("deny");
+    }
+  });
+  it("denies a write tool with no path and names the keys it sent", () => {
+    const r = decide(p(), { name: "write_file", args: { Content: "x" } });
+    expect(r.decision).toBe("deny");
+    expect(r.reason).toMatch(/no file path.*Content/);
+  });
+  it("lets read_file read inside the worktree only", () => {
+    expect(d(p(), "read_file", { path: "src/a.ts" })).toBe("auto_approve");
+    expect(d(p(), "read_file", { path: path.join(os.tmpdir(), "elsewhere.txt") })).toBe("deny");
+  });
+  it("still denies unknown tools", () => {
+    expect(d(p(), "delete_file", { path: "src/a.ts" })).toBe("deny");
+  });
+});
