@@ -122,3 +122,29 @@ describe("planFiles", () => {
     expect(r.problems.map((p) => p.block)).toEqual([2]);
   });
 });
+
+describe("planFiles with a file list", () => {
+  const list = ["- Create: `src/m.mjs`", "- Test: `test/m.test.mjs`", ""];
+  it("does not guess which listed file a bare block belongs to", () => {
+    const text = join(...list, fence + "js", "export const m = 1;", fence);
+    const r = planFiles(text, ["src/m.mjs", "test/m.test.mjs"]);
+    expect(r.files).toEqual([]);
+    expect(r.problems[0]?.reason).toMatch(/several files are listed/);
+  });
+  it("still takes each block's path from its first-line comment", () => {
+    const text = join(
+      ...list,
+      fence + "js",
+      "// src/m.mjs",
+      "export const m = 1;",
+      fence,
+      fence + "js",
+      "// test/m.test.mjs",
+      "// test",
+      fence,
+    );
+    const r = planFiles(text, ["src/m.mjs", "test/m.test.mjs"]);
+    expect(r.problems).toEqual([]);
+    expect(r.files.map((f) => f.path)).toEqual(["src/m.mjs", "test/m.test.mjs"]);
+  });
+});

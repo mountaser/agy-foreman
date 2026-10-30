@@ -131,3 +131,24 @@ describe("applyStep", () => {
     expect(r.testTail).not.toContain("line 60\n");
   });
 });
+
+describe("applyStep coverage", () => {
+  it("refuses when a listed file has no block, and writes nothing", async () => {
+    const text = plan(
+      "### Task 1: x",
+      "- Create: `src/a.ts`",
+      "- Test: `test/a.test.ts`",
+      fence + "ts",
+      "// src/a.ts",
+      "export const a = 1;",
+      fence,
+    );
+    const repoRoot = makeRepo({ "plan.md": text });
+    const run = pass();
+    const r = await applyStep({ ...base, repoRoot, run });
+    expect(r.ok).toBe(false);
+    expect(r.problems[0]?.reason).toBe("no block found for listed file: test/a.test.ts");
+    expect(existsSync(path.join(repoRoot, "src/a.ts"))).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+  });
+});

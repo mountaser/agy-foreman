@@ -20,6 +20,8 @@ interface Block {
 }
 
 const INSTRUCTION = /\b(append|add to|insert|replace|modify)\b/i;
+// "- Create: `x`", "- Modify: `x`", "- Test: `x`": the step's file list, not a caption for one block.
+const FILE_LIST_ENTRY = /^\s*[-*]\s*(?:Create|Modify|Test)\s*:/i;
 const PATH_COMMENT = /^(?:\/\/|#(?!!)|--|<!--)\s*(\S+?)\s*(?:-->)?\s*$/;
 
 function looksLikePath(token: string): boolean {
@@ -76,6 +78,8 @@ export function planFiles(
   _files: string[],
 ): { files: PlannedFile[]; problems: BlockProblem[] } {
   const problems: BlockProblem[] = [];
+  // With several files listed, the line above a block says nothing about which file it is.
+  const listedFiles = stepText.split(/\r?\n/).filter((l) => FILE_LIST_ENTRY.test(l)).length;
   const candidates: { block: number; path: string; content: string }[] = [];
 
   for (const b of readBlocks(stepText)) {
@@ -90,6 +94,13 @@ export function planFiles(
     if (comment && looksLikePath(comment[1])) {
       target = comment[1];
       body = b.lines.slice(1);
+    } else if (FILE_LIST_ENTRY.test(b.before) && listedFiles > 1) {
+      problems.push({
+        block: b.index,
+        reason:
+          "several files are listed and this block names none: put its path in a comment on its first line",
+      });
+      continue;
     } else {
       const named = [...b.before.matchAll(/`([^`]+)`/g)].map((m) => m[1]).filter(looksLikePath);
       if (named.length === 1) target = named[0];

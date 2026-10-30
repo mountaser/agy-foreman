@@ -46,6 +46,17 @@ export async function applyStep(opts: ApplyOptions): Promise<ApplyResult> {
   if (problems.length > 0) return { ok: false, written: [], problems };
   if (files.length === 0) return refuse("nothing to apply: the step has no file blocks");
 
+  // A listed file with no block would mean the tests run against an incomplete step.
+  const have = new Set(files.map((f) => f.path));
+  const missing = step.files.filter((f) => !have.has(f));
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      written: [],
+      problems: missing.map((f) => ({ block: 0, reason: `no block found for listed file: ${f}` })),
+    };
+  }
+
   const existing = files.filter((f) => existsSync(path.resolve(opts.repoRoot, f.path)));
   if (existing.length > 0) {
     return {
