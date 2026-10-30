@@ -78,10 +78,12 @@ export async function startFollowup(
     jobId: newId,
     kind: "implement",
     repoRoot: parent.repoRoot,
-    task: `${parent.title}\n\nFeedback:\n${feedback}`,
+    // A fresh conversation, not a resumed one: agy keeps a resumed conversation tied to its first
+    // workspace, so the gate hook still pointed at the old worktree and Gemini edited nothing
+    // (found live on agy 1.4). The parent's branch carries the earlier work.
+    task: followupTask(parent, feedback),
     contractTests: [],
     baseRef: parent.envelope?.branch ?? `agy/${parent.id}`,
-    conversationId: parent.envelope?.conversationId,
     timeoutSec: config.runtime.defaultTimeoutSec,
     config: config.project,
     runtime: config.runtime,
@@ -89,6 +91,21 @@ export async function startFollowup(
 
   const state = await ctx.scheduler.submit(newRec, spec);
   return { state, jobId: newId };
+}
+
+/** What a follow-up tells a fresh conversation: the task, how the last try ended, the feedback. */
+function followupTask(parent: JobRecord, feedback: string): string {
+  const verify = parent.envelope?.verify;
+  const tail = verify && !verify.passed ? verify.outputTail : "";
+  return [
+    parent.title,
+    "",
+    "An earlier attempt at this task is already committed on this branch. Build on it; do not start over.",
+    ...(tail ? ["", "How its test run ended:", tail.slice(-1200)] : []),
+    "",
+    "Feedback:",
+    feedback,
+  ].join("\n");
 }
 
 export async function handleAct(

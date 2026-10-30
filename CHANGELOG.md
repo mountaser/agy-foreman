@@ -2,6 +2,17 @@
 
 All notable changes to agy-foreman. Versions follow [semver](https://semver.org/); the newest is first.
 
+## 0.2.4 - 2026-10-30
+
+### Fixed
+
+- **Follow-ups start a fresh conversation.** agy ties a resumed conversation to the workspace of its first run, so the gate hook kept pointing at the old worktree and Gemini could not read or edit anything in the new one (0.2.3's wording fix could not help). A follow-up now starts a new conversation on the parent's branch, and its brief carries the earlier attempt's test output and your feedback. Quota auto-resumes work the same way.
+- **Explore returned an empty result as `passed`.** agy 1.4 sends a `structuredOutput` that is not the schema asked for; it was trusted over the reply text. It is now used only when it has a summary or citations, and otherwise the first matching JSON object in the reply is taken.
+
+### Added
+
+- **Queued jobs say why.** `agy_start` returns `queuedReason` and `agy_status` lists `queuedReasons` (for example "hourly cap reached: 10 jobs started in the last hour (max_runs_per_hour 10 in .agy-foreman.json)"). Before, a job held back by the hourly cap just sat in `queued`.
+
 ## 0.2.3 - 2026-10-30
 
 Found by running every feature against a live agy 1.4.11.

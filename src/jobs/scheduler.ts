@@ -67,7 +67,8 @@ export class JobScheduler {
     return next;
   }
 
-  private async canRunJob(repoRoot: string, candidate: JobRecord): Promise<boolean> {
+  /** Why the job cannot start now, or undefined when it can. */
+  private async blockedReason(repoRoot: string, candidate: JobRecord): Promise<string | undefined> {
     const config = this.deps.loadConfig(repoRoot);
 
     // 1. Concurrency: in-memory running set per repo (isSamePath)
@@ -78,7 +79,7 @@ export class JobScheduler {
       }
     }
     if (runningCount >= config.project.maxConcurrent) {
-      return false;
+      return `waiting for a free slot: ${runningCount} job(s) already running here (max_concurrent ${config.project.maxConcurrent})`;
     }
 
     // 2. Hourly cap: counts jobs of that repo whose createdAt is within the last hour
@@ -109,10 +110,10 @@ export class JobScheduler {
     }
 
     if (startedIds.size >= config.project.maxRunsPerHour) {
-      return false;
+      return `hourly cap reached: ${startedIds.size} jobs started in the last hour (max_runs_per_hour ${config.project.maxRunsPerHour} in .agy-foreman.json); rechecked every minute`;
     }
 
-    return true;
+    return undefined;
   }
 
   private startJob(record: JobRecord, spec: JobSpec): void {
@@ -138,9 +139,15 @@ export class JobScheduler {
   private async drain(): Promise<void> {
     await this.runSerialized(async () => {
       for (const [id, queued] of this.queuedJobs.entries()) {
-        const canRun = await this.canRunJob(queued.record.repoRoot, queued.record);
-        if (canRun) {
+        const blocked = await this.blockedReason(queued.record.repoRoot, queued.record);
+        if (blocked) {
+          if (queued.record.queuedReason !== blocked) {
+            queued.record.queuedReason = blocked;
+            await this.write(queued.record);
+          }
+        } else {
           this.queuedJobs.delete(id);
+          delete queued.record.queuedReason;
           queued.record.state = "running";
           queued.record.ownerPid = process.pid;
           queued.record.updatedAt = this.deps.now().toISOString();
@@ -168,9 +175,10 @@ export class JobScheduler {
   /** Writes the record as "running" or "queued" and starts it when the repo has a free slot. */
   async submit(record: JobRecord, spec: JobSpec): Promise<"running" | "queued"> {
     return this.runSerialized(async () => {
-      const canRun = await this.canRunJob(record.repoRoot, record);
-      const state: "running" | "queued" = canRun ? "running" : "queued";
+      const blocked = await this.blockedReason(record.repoRoot, record);
+      const state: "running" | "queued" = blocked ? "queued" : "running";
       record.state = state;
+      if (blocked) record.queuedReason = blocked;
       record.ownerPid = process.pid;
       record.updatedAt = this.deps.now().toISOString();
       await this.write(record);

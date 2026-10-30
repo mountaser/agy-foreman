@@ -33,7 +33,14 @@ export interface StartInput {
 }
 
 export type StartResult =
-  | { state: "queued" | "running"; jobId: string; waitHint: string; lessonsInjected?: number }
+  | {
+      state: "queued" | "running";
+      jobId: string;
+      waitHint: string;
+      lessonsInjected?: number;
+      /** Why a queued job is not running yet. */
+      queuedReason?: string;
+    }
   | { state: "refused" | "denied"; reason: string }
   | {
       state: "quota";
@@ -147,6 +154,7 @@ export class JobManager {
       jobId: record.id,
       waitHint: `agy-foreman wait ${record.id}`,
       lessonsInjected,
+      ...(state === "queued" && record.queuedReason ? { queuedReason: record.queuedReason } : {}),
     };
   }
 
@@ -238,7 +246,11 @@ export class JobManager {
     const running = filteredJobs
       .filter((j) => j.state === "running")
       .map((j) => ({ id: j.id, line: renderProgressLine(j) }));
-    const queued = filteredJobs.filter((j) => j.state === "queued").map((j) => j.id);
+    const queuedJobs = filteredJobs.filter((j) => j.state === "queued");
+    const queued = queuedJobs.map((j) => j.id);
+    const queuedReasons = Object.fromEntries(
+      queuedJobs.filter((j) => j.queuedReason).map((j) => [j.id, j.queuedReason]),
+    );
 
     const nowDate = this.deps.now();
     const startOfToday = new Date(
@@ -265,6 +277,7 @@ export class JobManager {
       ...(cooldown ? { cooldown } : {}),
       running,
       queued,
+      ...(Object.keys(queuedReasons).length > 0 ? { queuedReasons } : {}),
       today,
       calibration,
       lessons,

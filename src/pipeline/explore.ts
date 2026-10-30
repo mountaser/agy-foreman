@@ -62,9 +62,16 @@ export async function runExploreJob(
       jobReason = failure.jobReason;
       quotaData = failure.quotaData;
     } else if (outcome.type === "success") {
-      let parsed: any = outcome.structuredOutput;
+      // agy 1.4 returns a structuredOutput that is not our schema (an empty object, for one), so
+      // only trust it when it has the fields we asked for; otherwise read the reply text.
+      const looksRight = (v: unknown): v is Record<string, unknown> =>
+        !!v &&
+        typeof v === "object" &&
+        (typeof (v as { summary?: unknown }).summary === "string" ||
+          Array.isArray((v as { citations?: unknown }).citations));
+      let parsed: any = looksRight(outcome.structuredOutput) ? outcome.structuredOutput : undefined;
       if (!parsed && outcome.response) {
-        parsed = extractJsonObject(outcome.response);
+        parsed = extractJsonObject(outcome.response, looksRight);
       }
 
       if (!parsed || typeof parsed !== "object") {

@@ -33,3 +33,18 @@ describe("extractJsonObject", () => {
     expect(extractJsonObject("{ broken")).toBeUndefined();
   });
 });
+
+describe("extractJsonObject with an accept rule", () => {
+  const good = (v: Record<string, unknown>) => typeof v.summary === "string";
+  it("skips an object of another shape and takes the one that fits", () => {
+    const text = '{"findings":[]}\n```json\n{"summary":"yes","citations":[]}\n```';
+    expect(extractJsonObject(text, good)).toEqual({ summary: "yes", citations: [] });
+  });
+  it("prefers the leading answer over a later example of the same shape", () => {
+    const text = '{"summary":"first"} then {"summary":"second"}';
+    expect(extractJsonObject(text, good)).toEqual({ summary: "first" });
+  });
+  it("returns undefined when nothing fits", () => {
+    expect(extractJsonObject('{"findings":[]}', good)).toBeUndefined();
+  });
+});

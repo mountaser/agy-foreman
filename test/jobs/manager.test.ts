@@ -229,7 +229,8 @@ describe("quota handling", () => {
     await m.start({ repoRoot: repo, kind: "implement", task: "build it", estimate: EST });
     await m.idle();
     expect(specs).toHaveLength(2);
-    expect(specs[1]).toMatchObject({ conversationId: "c1", baseRef: `agy/${specs[0].jobId}` });
+    expect(specs[1]).toMatchObject({ baseRef: `agy/${specs[0].jobId}` });
+    expect(specs[1].conversationId).toBeUndefined();
     expect(specs[1].task).toContain("usage limit");
   });
 });
@@ -248,7 +249,9 @@ describe("act", () => {
     });
     expect(f.jobId).toMatch(/^t-/);
     await m.idle();
-    expect(specs[1]).toMatchObject({ baseRef: `agy/${specs[0].jobId}`, conversationId: "conv-9" });
+    expect(specs[1]).toMatchObject({ baseRef: `agy/${specs[0].jobId}` });
+    // Never resumed: agy ties a resumed conversation to its first worktree.
+    expect(specs[1].conversationId).toBeUndefined();
     expect(specs[1].task).toContain("handle empty input");
     expect(specs[1].contractTests ?? []).toEqual([]);
   });
@@ -678,5 +681,64 @@ describe("service errors", () => {
     await m.idle();
     await new Promise((r) => setTimeout(r, 100));
     expect(specs).toHaveLength(1);
+  });
+});
+
+describe("queued reasons", () => {
+  it("says why a job waits: hourly cap, then no free slot", async () => {
+    const capped = setup({ config: { max_runs_per_hour: 1 } });
+    await capped.m.start({ repoRoot: capped.repo, kind: "implement", task: "One", estimate: EST });
+    await capped.m.idle();
+    const second = await capped.m.start({
+      repoRoot: capped.repo,
+      kind: "implement",
+      task: "Two",
+      estimate: EST,
+    });
+    expect(second).toMatchObject({
+      state: "queued",
+      queuedReason: expect.stringMatching(
+        /hourly cap reached: 1 jobs started.*max_runs_per_hour 1/,
+      ),
+    });
+    const status = await capped.m.status(capped.repo);
+    expect(status.queuedReasons).toEqual({
+      [(second as { jobId: string }).jobId]: expect.stringMatching(/hourly cap/),
+    });
+
+    const busy = setup({
+      config: { max_concurrent: 1 },
+      events: () => new Promise((r) => setTimeout(r, 300)),
+    });
+    await busy.m.start({ repoRoot: busy.repo, kind: "implement", task: "One", estimate: EST });
+    const waiting = await busy.m.start({
+      repoRoot: busy.repo,
+      kind: "implement",
+      task: "Two",
+      estimate: EST,
+    });
+    expect(waiting).toMatchObject({
+      state: "queued",
+      queuedReason: expect.stringMatching(/waiting for a free slot: 1 job\(s\) already running/),
+    });
+    await busy.m.idle();
+  });
+});
+
+describe("follow-up task text", () => {
+  it("carries the earlier result and the feedback into a fresh conversation", async () => {
+    const verify = { passed: false, outputTail: "6 !== 7 expected 7" } as never;
+    const { m, repo, specs } = setup({ result: (s) => envelope(s, "failed", { verify }) });
+    const r = await m.start({ repoRoot: repo, kind: "implement", task: "Make mul", estimate: EST });
+    await m.idle();
+    await m.act({
+      action: "followup",
+      jobId: (r as { jobId: string }).jobId,
+      feedback: "use a*b+1",
+    });
+    await m.idle();
+    expect(specs[1].task).toContain("An earlier attempt at this task is already committed");
+    expect(specs[1].task).toContain("6 !== 7 expected 7");
+    expect(specs[1].task).toContain("Feedback:\nuse a*b+1");
   });
 });

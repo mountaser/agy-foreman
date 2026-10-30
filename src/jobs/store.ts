@@ -57,6 +57,8 @@ export interface JobRecord {
   returnedChars: number;
   incident?: Incident;
   errorReason?: string;
+  /** Why a queued job has not started (hourly cap, no free slot). */
+  queuedReason?: string;
   ownerPid?: number;
 }
 
