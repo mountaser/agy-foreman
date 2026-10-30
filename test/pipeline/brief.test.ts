@@ -77,3 +77,15 @@ describe("progress and constants", () => {
     expect(EXPLORE_SCHEMA).toMatchObject({ type: "object", required: ["summary", "citations"] });
   });
 });
+
+describe("shell-write rule", () => {
+  it("tells Gemini the shell cannot write files", () => {
+    const text = renderBrief({
+      kind: "implement",
+      task: "t",
+      date: "2026-10-30",
+    } as never);
+    expect(text).toContain("file edit tools only");
+    expect(text).toContain("Do not run bash on Windows");
+  });
+});

@@ -237,7 +237,7 @@ export function decide(policy: GatePolicy, call: ToolCall): GateDecision {
     const danger =
       /\bgit\s+(push|commit|reset|checkout|switch|rebase|merge|remote|config|clean|stash|worktree|branch|tag)\b|\b(curl|wget|irm|iwr|Invoke-WebRequest|Invoke-RestMethod|iex|Invoke-Expression)\b|\brm\s+-rf\b|\bRemove-Item\b.*?\b-Recurse\b|\brmdir\s+\/s\b|\bdel\s+\/s\b|\bshutdown\b|(^|[;&|]\s*)format\s+[A-Za-z]:/i;
 
-    if (danger.test(cmdLine)) {
+    if (!isListingBranches(cmdLine) && danger.test(cmdLine)) {
       return { decision: "deny", reason: "Dangerous command not allowed." };
     }
 
@@ -262,9 +262,19 @@ export function decide(policy: GatePolicy, call: ToolCall): GateDecision {
     const listings =
       /^(ls|dir|cat|type|echo|pwd|Get-ChildItem|Get-Content|Test-Path|Select-String)\b/i;
 
+    // Asking a tool for its version, or listing branches, changes nothing; Gemini does both to
+    // check its environment, and each denial costs a step.
+    const versionProbe =
+      /^(go|node|python3?|npm|npx|git|tsc|java|cargo|dart|flutter)\s+(--version|-v|version)\s*$/i;
+    const readOnly = (seg: string): boolean =>
+      readOnlyGit.test(seg) ||
+      listings.test(seg) ||
+      versionProbe.test(seg) ||
+      isListingBranches(seg);
+
     for (const seg of segments) {
       if (policy.mode === "explore") {
-        const isOk = readOnlyGit.test(seg) || listings.test(seg);
+        const isOk = readOnly(seg);
         if (!isOk) {
           return { decision: "deny", reason: "Command not allowed in explore mode." };
         }
@@ -272,7 +282,7 @@ export function decide(policy: GatePolicy, call: ToolCall): GateDecision {
         const isAllowedPrefix = policy.allowedCommands.some((cmd) =>
           new RegExp(`^${escapeRegex(cmd)}\\b`, "i").test(seg),
         );
-        const isOk = isAllowedPrefix || readOnlyGit.test(seg) || listings.test(seg);
+        const isOk = isAllowedPrefix || readOnly(seg);
         if (!isOk) {
           if (policy.unknownCommands === "allow") {
             continue;
@@ -358,4 +368,9 @@ export async function installGate(
   };
 
   writeFileSync(hooksPath, JSON.stringify(existingHooks, null, 2), "utf8");
+}
+
+/** `git branch` that only lists, never creates, renames or deletes a branch. */
+function isListingBranches(cmd: string): boolean {
+  return /^git\s+branch(\s+(-a|-r|-v|-vv|--list|--show-current))*\s*$/i.test(cmd.trim());
 }

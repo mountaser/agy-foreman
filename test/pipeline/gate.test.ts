@@ -219,3 +219,29 @@ describe("symlinked worktree paths", () => {
     );
   });
 });
+
+describe("read-only probes", () => {
+  const run = (line: string) => d(p(), "run_command", { CommandLine: line });
+  it.each([
+    "git branch",
+    "git branch -a",
+    "git branch --show-current",
+    "go version",
+    "node --version",
+    "python --version",
+    "git --version",
+  ])("allows %s", (line) => {
+    expect(run(line)).toBe("auto_approve");
+  });
+  it.each([
+    "git branch -D main",
+    "git branch newname",
+    "git branch -a; git branch -D main",
+    "git checkout main",
+    "go build ./...",
+    "node -e 'process.exit()'",
+    "Set-Content a.txt hi",
+  ])("still denies %s", (line) => {
+    expect(run(line)).toBe("deny");
+  });
+});
