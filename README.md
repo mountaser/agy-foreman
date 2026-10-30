@@ -139,6 +139,10 @@ When a job fails, the failure is recorded as an incident and Claude writes a one
 | `allowed_mcp`, `web` | `[]`, `false` | MCP tools and web access for Gemini           |
 | `gate`               | `elicitation` | `client` if your client has no approval cards |
 
+### Status file
+
+While jobs run, agy-foreman keeps `status.json` in its state folder up to date (`%LOCALAPPDATA%gy-foreman` on Windows). Status lines can read it to show progress; the format is described in [docs/superpowers/specs/2026-10-30-status-snapshot-design.md](docs/superpowers/specs/2026-10-30-status-snapshot-design.md).
+
 ## Limitations
 
 - **Gemini 3.8 Flash only**, with effort `low`, `medium` or `high`. Other models in agy need plans that this project doesn't target.
