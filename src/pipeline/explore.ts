@@ -11,6 +11,7 @@ import {
   mapFailureOutcome,
 } from "./envelope-build.js";
 import { gatedRun } from "./gated-run.js";
+import { extractJsonObject } from "./json-extract.js";
 
 export async function runExploreJob(
   spec: JobSpec,
@@ -63,18 +64,7 @@ export async function runExploreJob(
     } else if (outcome.type === "success") {
       let parsed: any = outcome.structuredOutput;
       if (!parsed && outcome.response) {
-        try {
-          parsed = JSON.parse(outcome.response);
-        } catch {
-          const m = outcome.response.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-          if (m) {
-            try {
-              parsed = JSON.parse(m[1]);
-            } catch {
-              // ignore
-            }
-          }
-        }
+        parsed = extractJsonObject(outcome.response);
       }
 
       if (!parsed || typeof parsed !== "object") {
