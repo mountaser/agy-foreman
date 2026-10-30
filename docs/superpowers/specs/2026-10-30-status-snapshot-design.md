@@ -78,7 +78,7 @@ The file is a public contract. Its format is versioned and documented here.
 
 ### Group selection
 
-The snapshot describes one group of jobs: the plan of the oldest running job, or of the oldest queued job when none is running. Jobs of the same plan file and repository belong to the group. A job started without a plan is a group of one.
+The snapshot describes one group of jobs: the plan of the oldest running job, or of the oldest queued job when none is running. Within that plan (same plan file and repository), the group is the current run: the oldest active job of the plan, every job created after it, and the earlier jobs that lead up to it, going back until two neighbouring jobs were created more than 2 hours apart. Older jobs of the same plan are history and are ignored, so running a plan again later starts from zero. A job started without a plan is a group of one.
 
 ### Steps
 
@@ -100,22 +100,23 @@ A step is `passed` if any job for it passed, else `running` if one is running, e
 |---|---|---|
 | `reading` | A tool that views, lists, searches or reads. | File or folder base name, when the tool names one. |
 | `editing` | A tool that writes, replaces, patches, creates, deletes or moves. | File base name. |
-| `testing` | A command that runs tests, vet, formatting or type checks (`go test`, `go vet`, `gofmt`, `npm test`, `vitest`, `tsc`, `prettier`, `pytest`, `cargo test`). | none |
+| `testing` | A command that runs `go test`, `go vet`, `gofmt`, `npm test`, `vitest`, `tsc`, `prettier`, `pytest` or `cargo test`, at the start of the command line or after `&&`, `;`, `|` or `(`. A word inside an argument does not count. | none |
 | `git` | A command starting with `git`. | none |
 | `command` | Any other command. | none |
 | `thinking` | The last tool call finished and the next has not started. | none |
 
-The raw command line is never written. `at` is the time the activity started.
+The raw command line is never written. `at` is the time the activity started. Tool calls that only poll or feed a terminal (`command_status`, `read_terminal`, `send_command_input`) leave the activity unchanged.
 
 ### Diff
 
-The diff of a running job is measured in its worktree: tracked changes against `HEAD` plus new untracked files (lines counted), ignoring `.agy-task/` and `.agents/`. For a finished job it is read from the last line of the envelope's `diffStat`. The group diff is the sum.
+The diff of a running job is measured in its worktree with `git --no-optional-locks`: tracked changes against `HEAD` plus new untracked files (lines counted), ignoring `.agy-task/` and `.agents/`. Reading never takes git's index lock, so it cannot collide with Gemini's or the pipeline's own git commands. An untracked file over 1 MB counts as a file with no lines. Nothing is measured unless the folder itself contains a `.git`. For a finished job the diff is read from the last line of the envelope's `diffStat`. The group diff is the sum.
 
 ## When the file is written
 
-- After every job record is written, debounced to at most one write per 200 ms.
-- Every second while any job is active (heartbeat), so `updatedAt` stays fresh and the activity age keeps counting.
+- After every job record is written, debounced to at most one write per 200 ms. The server keeps the job records in memory (loaded once on the first write, then updated by every record write), so a job file that cannot be read for a moment never drops a job.
+- Every second while any job is active (heartbeat), so `updatedAt` stays fresh and the activity age keeps counting. A heartbeat tick is skipped while a write is still running.
 - Once more when the last job finishes, with `active: false`. After that nothing is written until a job starts again.
+- Diffs are measured in the background, at most every 5 seconds per running job and never twice at once. A write uses the latest finished measurement and never waits for git.
 - Writes go to a temporary file in the same folder and are renamed into place, so a reader never sees half a file.
 - A failed write is ignored. It never stops a job.
 

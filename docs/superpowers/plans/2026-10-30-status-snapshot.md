@@ -142,7 +142,7 @@ describe("JobStore onWrite", () => {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `npx vitest run test/paths-status.test.ts test/jobs/store-onwrite.test.ts`
-Expected: FAIL (`statusFile` is not exported; type errors about `onWrite`, `delegateSteps`, `activity`)
+Expected: FAIL (`statusFile` is not exported). The store tests only fail the type check, which `npm run test:ci` runs through `tsc`.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -314,6 +314,27 @@ describe("classifyTool", () => {
     expect(JSON.stringify(odd)).not.toContain("echo");
   });
 
+  it("recognises a test command that follows other commands", () => {
+    expect(classifyTool("run_command", { CommandLine: "cd internal && go test ./..." })).toEqual({
+      kind: "testing",
+    });
+  });
+
+  it("does not take a word inside an argument for a test command", () => {
+    expect(classifyTool("run_command", { CommandLine: 'git commit -m "fix tsc"' })).toEqual({
+      kind: "git",
+    });
+    expect(classifyTool("run_command", { CommandLine: 'echo "go test"' })).toEqual({
+      kind: "command",
+    });
+  });
+
+  it("ignores tools that only poll or feed a terminal", () => {
+    expect(classifyTool("command_status", { CommandId: "1" })).toBeUndefined();
+    expect(classifyTool("read_terminal", {})).toBeUndefined();
+    expect(classifyTool("send_command_input", { Input: "y" })).toBeUndefined();
+  });
+
   it("returns undefined for unknown or missing tools", () => {
     expect(classifyTool("mystery_tool", {})).toBeUndefined();
     expect(classifyTool(undefined, {})).toBeUndefined();
@@ -349,6 +370,11 @@ describe("activityFor", () => {
     expect(activityFor(prev, { toolName: "mystery_tool", state: "RUNNING" }, NOW)).toBe(prev);
   });
 
+  it("keeps testing while the command's status is polled", () => {
+    const prev: Activity = { kind: "testing", at: "2026-10-30T14:29:00.000Z" };
+    expect(activityFor(prev, { toolName: "command_status", state: "RUNNING" }, NOW)).toBe(prev);
+  });
+
   it("starts nothing without a tool name", () => {
     expect(activityFor(undefined, { state: "RUNNING" }, NOW)).toBeUndefined();
   });
@@ -366,8 +392,10 @@ Expected: FAIL (cannot find module `../../src/snapshot/activity.js`)
 ```ts
 import type { Activity, ActivityKind } from "./types.js";
 
+// The program must start the command or follow `&&`, `;`, `|` or `(`, so a word inside an argument
+// (`git commit -m "fix tsc"`) does not count.
 const TEST_COMMAND =
-  /\b(go\s+(test|vet|build)|gofmt|npm\s+(run\s+)?(test|typecheck|format)|npx\s+(vitest|tsc|prettier)|vitest|pytest|cargo\s+(test|check)|tsc|prettier)\b/i;
+  /(^|&&|;|\||\()\s*(go\s+(test|vet)|gofmt|npm\s+(run\s+)?test|npx\s+(vitest|tsc|prettier)|vitest|pytest|cargo\s+test|tsc|prettier)\b/i;
 
 const PATH_KEYS = ["TargetFile", "AbsolutePath", "DirectoryPath", "SearchDirectory", "SearchPath"];
 
@@ -397,7 +425,9 @@ export function classifyTool(
   params: Record<string, unknown> | undefined,
 ): { kind: ActivityKind; target?: string } | undefined {
   if (!toolName) return undefined;
-  if (/command|shell|terminal|exec/i.test(toolName)) {
+  // Polling or feeding a terminal does not change what the command is.
+  if (/status|terminal|input/i.test(toolName)) return undefined;
+  if (/command|shell|exec/i.test(toolName)) {
     const line = String(params?.CommandLine ?? params?.command ?? "");
     if (TEST_COMMAND.test(line)) return { kind: "testing" };
     if (/^\s*git\b/i.test(line)) return { kind: "git" };
@@ -509,10 +539,24 @@ describe("diffStat", () => {
     expect(await diffStat(dir)).toEqual({ files: 1, added: 2, deleted: 0 });
   });
 
+  it("counts a file over 1 MB as a file with no lines", async () => {
+    const dir = repo();
+    writeFileSync(path.join(dir, "big.bin"), "a\n".repeat(600_000));
+    expect(await diffStat(dir)).toEqual({ files: 1, added: 0, deleted: 0 });
+  });
+
   it("is undefined when git fails", async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "foreman-nogit-"));
+    mkdirSync(path.join(dir, ".git"));
     const failing = async () => ({ code: 128, stdout: "", stderr: "fatal", timedOut: false });
     expect(await diffStat(dir, failing)).toBeUndefined();
+  });
+
+  it("is undefined for a folder that is not itself a worktree", async () => {
+    const dir = repo();
+    const sub = path.join(dir, "sub");
+    mkdirSync(sub);
+    expect(await diffStat(sub)).toBeUndefined();
   });
 });
 ```
@@ -526,7 +570,8 @@ Expected: FAIL (cannot find module `../../src/snapshot/diff.js`)
 
 `src/snapshot/diff.ts`:
 ```ts
-import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { runCommand } from "../pipeline/exec.js";
 import type { DiffStat } from "./types.js";
@@ -546,20 +591,24 @@ function countLines(text: string): number {
 
 /**
  * Files, added lines and deleted lines in a job's worktree: tracked changes against HEAD plus new
- * untracked files. It reads only; it never touches the worktree's index. Undefined when git fails.
+ * untracked files. Every git call uses `--no-optional-locks`, so it never takes the index lock and
+ * cannot collide with Gemini's or the pipeline's own git commands. Undefined when the folder is
+ * not itself a worktree or git fails.
  */
 export async function diffStat(
   worktree: string,
   run: typeof runCommand = runCommand,
 ): Promise<DiffStat | undefined> {
-  const tracked = await run(["git", "diff", "--numstat", "HEAD"], {
+  // A folder inside some other repository would make git measure that repository instead.
+  if (!existsSync(path.join(worktree, ".git"))) return undefined;
+  const tracked = await run(["git", "--no-optional-locks", "diff", "--numstat", "HEAD"], {
     cwd: worktree,
     timeoutMs: 5000,
   });
-  const untracked = await run(["git", "ls-files", "--others", "--exclude-standard"], {
-    cwd: worktree,
-    timeoutMs: 5000,
-  });
+  const untracked = await run(
+    ["git", "--no-optional-locks", "ls-files", "--others", "--exclude-standard"],
+    { cwd: worktree, timeoutMs: 5000 },
+  );
   if (tracked.code !== 0 || untracked.code !== 0) return undefined;
 
   let files = 0;
@@ -576,8 +625,10 @@ export async function diffStat(
     if (!rel || ignored(rel)) continue;
     files++;
     try {
-      const buf = await readFile(path.join(worktree, rel));
-      if (buf.length <= MAX_UNTRACKED_BYTES) added += countLines(buf.toString("utf8"));
+      const file = path.join(worktree, rel);
+      if ((await stat(file)).size <= MAX_UNTRACKED_BYTES) {
+        added += countLines((await readFile(file)).toString("utf8"));
+      }
     } catch {
       // unreadable: it still counts as a file
     }
@@ -829,6 +880,60 @@ describe("buildSnapshot", () => {
     expect(s.jobs.map((j) => j.id)).toEqual(["mine"]);
   });
 
+  it("ignores an earlier run of the same plan", () => {
+    const s = buildSnapshot({
+      ...base,
+      jobs: [
+        rec({
+          id: "old1",
+          state: "passed",
+          plan: plan(2, [2, 3]),
+          createdAt: "2026-10-27T10:00:00.000Z",
+          progress: { ...emptyProgress(), tokens: 900000 },
+        }),
+        rec({
+          id: "old2",
+          state: "passed",
+          plan: plan(3, [2, 3]),
+          createdAt: "2026-10-27T10:30:00.000Z",
+          progress: { ...emptyProgress(), tokens: 900000 },
+        }),
+        rec({
+          id: "new",
+          plan: plan(2, [2, 3]),
+          progress: { ...emptyProgress(), phase: "run", tokens: 1000 },
+        }),
+      ],
+    });
+    expect(s.plan?.steps).toEqual(["running", "pending"]);
+    expect(s.plan?.done).toBe(0);
+    expect(s.plan?.elapsedSec).toBe(600);
+    expect(s.plan?.tokens).toBe(1000);
+  });
+
+  it("keeps the earlier jobs of the same run when the gaps are under two hours", () => {
+    const s = buildSnapshot({
+      ...base,
+      jobs: [
+        rec({
+          id: "a",
+          state: "passed",
+          plan: plan(2, [2, 3, 4]),
+          createdAt: "2026-10-30T12:30:00.000Z",
+        }),
+        rec({
+          id: "b",
+          state: "passed",
+          plan: plan(3, [2, 3, 4]),
+          createdAt: "2026-10-30T13:40:00.000Z",
+        }),
+        rec({ id: "c", plan: plan(4, [2, 3, 4]) }),
+      ],
+    });
+    expect(s.plan?.steps).toEqual(["passed", "passed", "running"]);
+    expect(s.plan?.elapsedSec).toBe(7200);
+  });
+
   it("passes the quota through", () => {
     const quota = {
       fetchedAt: "2026-10-30T14:29:00.000Z",
@@ -882,6 +987,34 @@ export interface BuildInput {
 
 const byCreated = (a: JobRecord, b: JobRecord) => a.createdAt.localeCompare(b.createdAt);
 
+/** Two neighbouring jobs of a plan more than this far apart belong to different runs. */
+const RUN_GAP_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * The jobs of the shown plan that belong to the current run: everything from the oldest active job
+ * on, plus the earlier jobs that lead up to it without a gap of more than two hours. Older jobs
+ * of the same plan are history.
+ */
+function currentRun(shown: JobRecord, jobs: JobRecord[]): JobRecord[] {
+  const samePlan = jobs
+    .filter((j) =>
+      shown.plan ? j.plan?.file === shown.plan.file && j.repoRoot === shown.repoRoot : j.id === shown.id,
+    )
+    .sort(byCreated);
+  if (!shown.plan) return samePlan;
+  let start = Math.max(
+    0,
+    samePlan.findIndex((j) => !isTerminal(j.state)),
+  );
+  while (
+    start > 0 &&
+    Date.parse(samePlan[start].createdAt) - Date.parse(samePlan[start - 1].createdAt) <= RUN_GAP_MS
+  ) {
+    start--;
+  }
+  return samePlan.slice(start);
+}
+
 function stepState(mine: JobRecord[]): StepState {
   if (mine.some((j) => j.state === "passed")) return "passed";
   if (mine.some((j) => j.state === "running")) return "running";
@@ -917,11 +1050,7 @@ export function buildSnapshot(i: BuildInput): Snapshot {
   if (active.length === 0) return { ...base, active: false, jobs: [], ...quota };
 
   const shown = active.find((j) => j.state === "running") ?? active[0];
-  const inGroup = (j: JobRecord) =>
-    shown.plan
-      ? j.plan?.file === shown.plan.file && j.repoRoot === shown.repoRoot
-      : j.id === shown.id;
-  const group = i.jobs.filter(inGroup).sort(byCreated);
+  const group = currentRun(shown, i.jobs);
 
   const numbers = stepNumbers(shown, group, i);
   const steps = numbers
@@ -990,8 +1119,14 @@ git commit -m "feat: build the status snapshot from job records"
 - Consumes: `buildSnapshot` (Task 4); `Snapshot`, `DiffStat` (Task 1); `JobRecord` from `src/jobs/store.ts`; `QuotaSnapshot`; `renameWithRetry` from `src/jobs/fsutil.ts` (existing, used by `JobStore.write` as `renameWithRetry(tmpPath, finalPath)`).
 - Produces:
   - `interface SnapshotWriterDeps { file: string; listJobs: () => Promise<JobRecord[]>; readQuota: () => QuotaSnapshot | undefined; liveDiff: (job: JobRecord) => Promise<DiffStat | undefined>; planSteps: (planFile: string, repoRoot: string) => number | undefined; now: () => Date; pid: number; heartbeatMs?: number; debounceMs?: number; write?: (file: string, text: string) => Promise<void>; }`
-  - `class SnapshotWriter { constructor(deps: SnapshotWriterDeps); start(): void; notify(): void; writeNow(): Promise<void>; stop(): void }`
-  - Behavior: `notify()` schedules one write after `debounceMs` (default 200); several calls inside the window give one write. `start()` runs a timer every `heartbeatMs` (default 1000) that writes only while the last written snapshot was active. `writeNow()` serializes writes, caches each running job's live diff for 5000 ms, and never rejects. `stop()` clears both timers. All timers are `unref()`ed. Default `write` writes `file + ".tmp"` and renames it over `file` with `renameWithRetry`, creating the folder first.
+  - `class SnapshotWriter { constructor(deps: SnapshotWriterDeps); start(): void; notify(rec?: JobRecord): void; writeNow(): Promise<void>; stop(): void }`
+  - Behavior:
+    - The writer keeps the job records in memory. `listJobs` is called once, on the first write, to load the records already on disk. After that `notify(rec)` stores the record it is given (the live object the server is updating), so an unreadable job file can never drop a job.
+    - `notify()` schedules one write after `debounceMs` (default 200); several calls inside the window give one write.
+    - `start()` runs a timer every `heartbeatMs` (default 1000). A tick writes only when the last written snapshot was active and no write is running at that moment.
+    - `writeNow()` serializes writes and never rejects. A write never waits for git: the live diff of each running job is measured in the background, at most once per 5000 ms per job and never twice at the same time, and a write uses the latest finished measurement.
+    - `stop()` clears both timers. All timers are `unref()`ed.
+    - The default `write` writes `file + ".<pid>.tmp"` and renames it over `file` with `renameWithRetry`, creating the folder first.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1017,7 +1152,9 @@ function job(over: Partial<JobRecord> = {}): JobRecord {
   };
 }
 
-function make(jobs: JobRecord[]) {
+const settle = () => new Promise<void>((r) => setTimeout(r, 0));
+
+function make(jobs: JobRecord[], over: Partial<SnapshotWriterDeps> = {}) {
   const state = { jobs, now: Date.parse("2026-10-30T14:30:00.000Z"), lists: 0, diffs: 0 };
   const written: Snapshot[] = [];
   const deps: SnapshotWriterDeps = {
@@ -1039,6 +1176,7 @@ function make(jobs: JobRecord[]) {
     write: async (_file, text) => {
       written.push(JSON.parse(text) as Snapshot);
     },
+    ...over,
   };
   return { w: new SnapshotWriter(deps), state, written };
 }
@@ -1048,14 +1186,17 @@ afterEach(() => {
 });
 
 describe("SnapshotWriter", () => {
-  it("writes an active snapshot with the live diff", async () => {
+  it("writes an active snapshot and adds the live diff once it has been measured", async () => {
     const { w, written } = make([job()]);
     await w.writeNow();
     expect(written).toHaveLength(1);
     expect(written[0].version).toBe(1);
     expect(written[0].pid).toBe(42);
     expect(written[0].active).toBe(true);
-    expect(written[0].plan?.diff).toEqual({ files: 1, added: 2, deleted: 0 });
+    expect(written[0].plan?.diff).toBeUndefined();
+    await settle();
+    await w.writeNow();
+    expect(written[1].plan?.diff).toEqual({ files: 1, added: 2, deleted: 0 });
   });
 
   it("writes an inactive snapshot when nothing is running", async () => {
@@ -1068,30 +1209,64 @@ describe("SnapshotWriter", () => {
   it("measures a running job's diff at most every five seconds", async () => {
     const { w, state } = make([job()]);
     await w.writeNow();
+    await settle();
     state.now += 1000;
     await w.writeNow();
+    await settle();
     expect(state.diffs).toBe(1);
     state.now += 5000;
     await w.writeNow();
+    await settle();
     expect(state.diffs).toBe(2);
   });
 
+  it("does not measure the same job twice at the same time", async () => {
+    let release!: () => void;
+    let calls = 0;
+    const { w, state } = make([job()], {
+      liveDiff: () => {
+        calls++;
+        return new Promise((r) => {
+          release = () => r({ files: 1, added: 1, deleted: 0 });
+        });
+      },
+    });
+    await w.writeNow();
+    state.now += 10_000;
+    await w.writeNow();
+    expect(calls).toBe(1);
+    release();
+  });
+
+  it("loads the existing records once and keeps the ones it is told about", async () => {
+    const { w, state, written } = make([]);
+    w.notify(job());
+    await w.writeNow();
+    await w.writeNow();
+    expect(state.lists).toBe(1);
+    expect(written[1].active).toBe(true);
+    expect(written[1].jobs[0].id).toBe("a");
+    w.stop();
+  });
+
+  it("uses the latest state of a record it was given", async () => {
+    const rec = job();
+    const { w, written } = make([]);
+    w.notify(rec);
+    await w.writeNow();
+    rec.state = "passed";
+    await w.writeNow();
+    expect(written[0].active).toBe(true);
+    expect(written[1].active).toBe(false);
+    w.stop();
+  });
+
   it("never rejects when the job list fails", async () => {
-    const { w } = make([]);
-    const failing = new SnapshotWriter({
-      ...({} as SnapshotWriterDeps),
+    const { w } = make([], {
       listJobs: async () => {
         throw new Error("disk");
       },
-      readQuota: () => undefined,
-      liveDiff: async () => undefined,
-      planSteps: () => undefined,
-      now: () => new Date(),
-      pid: 1,
-      file: "x",
-      write: async () => {},
     });
-    await expect(failing.writeNow()).resolves.toBeUndefined();
     await expect(w.writeNow()).resolves.toBeUndefined();
   });
 
@@ -1105,28 +1280,66 @@ describe("SnapshotWriter", () => {
     expect(state.lists).toBe(1);
   });
 
-  it("rewrites every second while active, and stops writing when idle or stopped", async () => {
+  it("rewrites every second while active", async () => {
     vi.useFakeTimers();
-    const { w, state, written } = make([job()]);
+    const { w, written } = make([job()]);
     w.start();
     await w.writeNow();
     expect(written).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(3100);
     expect(written.length).toBeGreaterThanOrEqual(4);
-
-    state.jobs = [job({ state: "passed" })];
-    await w.writeNow();
-    const afterIdle = written.length;
-    expect(written[afterIdle - 1].active).toBe(false);
-    await vi.advanceTimersByTimeAsync(3000);
-    expect(written).toHaveLength(afterIdle);
-
-    state.jobs = [job()];
-    await w.writeNow();
-    const beforeStop = written.length;
     w.stop();
+  });
+
+  it("stops the heartbeat once a snapshot says nothing is active", async () => {
+    vi.useFakeTimers();
+    const rec = job();
+    const { w, written } = make([]);
+    w.notify(rec);
+    w.start();
+    await w.writeNow();
+    rec.state = "passed";
+    await w.writeNow();
+    const count = written.length;
+    expect(written[count - 1].active).toBe(false);
     await vi.advanceTimersByTimeAsync(3000);
-    expect(written).toHaveLength(beforeStop);
+    expect(written).toHaveLength(count);
+    w.stop();
+  });
+
+  it("stops writing after stop()", async () => {
+    vi.useFakeTimers();
+    const { w, written } = make([job()]);
+    w.start();
+    await w.writeNow();
+    w.stop();
+    const count = written.length;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(written).toHaveLength(count);
+  });
+
+  it("skips heartbeat ticks while a write is still running", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    let calls = 0;
+    const { w } = make([job()], {
+      write: () => {
+        calls++;
+        return calls === 1
+          ? new Promise<void>((r) => {
+              release = r;
+            })
+          : Promise.resolve();
+      },
+    });
+    w.start();
+    void w.writeNow();
+    await vi.advanceTimersByTimeAsync(3500);
+    expect(calls).toBe(1);
+    release();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(calls).toBeGreaterThanOrEqual(2);
+    w.stop();
   });
 });
 ```
@@ -1170,13 +1383,20 @@ async function atomicWrite(file: string, text: string): Promise<void> {
   await renameWithRetry(tmp, file);
 }
 
-/** Keeps `status.json` current while jobs run. Failures are ignored: it must never stop a job. */
+/**
+ * Keeps `status.json` current while jobs run. It holds the job records in memory, so a job file
+ * that cannot be read for a moment never drops a job, and it never waits for git. Failures are
+ * ignored: it must never stop a job.
+ */
 export class SnapshotWriter {
   private heartbeat?: NodeJS.Timeout;
   private pending?: NodeJS.Timeout;
   private lastActive = false;
+  private writing = false;
+  private seeded = false;
   private chain: Promise<void> = Promise.resolve();
-  private readonly diffCache = new Map<string, { at: number; value?: DiffStat }>();
+  private readonly records = new Map<string, JobRecord>();
+  private readonly diffs = new Map<string, { at: number; busy: boolean; value?: DiffStat }>();
 
   constructor(private readonly d: SnapshotWriterDeps) {}
 
@@ -1184,13 +1404,14 @@ export class SnapshotWriter {
   start(): void {
     if (this.heartbeat) return;
     this.heartbeat = setInterval(() => {
-      if (this.lastActive) void this.writeNow();
+      if (this.lastActive && !this.writing) void this.writeNow();
     }, this.d.heartbeatMs ?? 1000);
     this.heartbeat.unref();
   }
 
-  /** Asks for a write soon. Several calls inside the debounce window give one write. */
-  notify(): void {
+  /** Remembers a record and asks for a write soon. Several calls inside the window give one write. */
+  notify(rec?: JobRecord): void {
+    if (rec) this.records.set(rec.id, rec);
     if (this.pending) return;
     this.pending = setTimeout(() => {
       this.pending = undefined;
@@ -1211,32 +1432,59 @@ export class SnapshotWriter {
     return this.chain;
   }
 
-  private async doWrite(): Promise<void> {
-    const now = this.d.now();
-    const jobs = await this.d.listJobs();
-    const live = new Map<string, DiffStat>();
+  /** Starts a background measurement for each running job whose last one is old enough. */
+  private refreshDiffs(jobs: JobRecord[], nowMs: number): void {
     for (const j of jobs) {
       if (j.state !== "running") {
-        this.diffCache.delete(j.id);
+        this.diffs.delete(j.id);
         continue;
       }
-      let c = this.diffCache.get(j.id);
-      if (!c || now.getTime() - c.at >= DIFF_TTL_MS) {
-        c = { at: now.getTime(), value: await this.d.liveDiff(j).catch(() => undefined) };
-        this.diffCache.set(j.id, c);
-      }
-      if (c.value) live.set(j.id, c.value);
+      const c = this.diffs.get(j.id);
+      if (c && (c.busy || nowMs - c.at < DIFF_TTL_MS)) continue;
+      this.diffs.set(j.id, { at: nowMs, busy: true, value: c?.value });
+      void this.d
+        .liveDiff(j)
+        .catch(() => undefined)
+        .then((value) => {
+          const cur = this.diffs.get(j.id);
+          if (cur) {
+            this.diffs.set(j.id, {
+              at: this.d.now().getTime(),
+              busy: false,
+              value: value ?? cur.value,
+            });
+          }
+        });
     }
-    const snap = buildSnapshot({
-      jobs,
-      now,
-      pid: this.d.pid,
-      quota: this.d.readQuota(),
-      planSteps: this.d.planSteps,
-      liveDiff: live,
-    });
-    this.lastActive = snap.active;
-    await (this.d.write ?? atomicWrite)(this.d.file, JSON.stringify(snap, null, 2) + "\n");
+  }
+
+  private async doWrite(): Promise<void> {
+    this.writing = true;
+    try {
+      if (!this.seeded) {
+        for (const r of await this.d.listJobs()) {
+          if (!this.records.has(r.id)) this.records.set(r.id, r);
+        }
+        this.seeded = true;
+      }
+      const now = this.d.now();
+      const jobs = [...this.records.values()];
+      this.refreshDiffs(jobs, now.getTime());
+      const live = new Map<string, DiffStat>();
+      for (const [id, c] of this.diffs) if (c.value) live.set(id, c.value);
+      const snap = buildSnapshot({
+        jobs,
+        now,
+        pid: this.d.pid,
+        quota: this.d.readQuota(),
+        planSteps: this.d.planSteps,
+        liveDiff: live,
+      });
+      this.lastActive = snap.active;
+      await (this.d.write ?? atomicWrite)(this.d.file, JSON.stringify(snap, null, 2) + "\n");
+    } finally {
+      this.writing = false;
+    }
   }
 }
 ```
@@ -1258,14 +1506,60 @@ git commit -m "feat: write the status snapshot while jobs run"
 ### Task 6: Wire the snapshot into the server
 
 **Files:**
-- Modify: `src/jobs/start.ts` (the `plan` line of the new record), `src/jobs/execute.ts` (`onEvent`, `onPhase`, imports), `src/runtime.ts`
-- Test: extend `test/snapshot/build.test.ts` is not needed; the wiring is checked by Task 7.
+- Modify: `src/jobs/start.ts` (the `plan` line of the new record), `src/jobs/execute.ts` (`onEvent`, `onPhase`, imports), `src/runtime.ts`, `test/jobs/manager.test.ts`
 
 **Interfaces:**
 - Consumes: `activityFor` (Task 2); `diffStat` (Task 3); `SnapshotWriter` (Task 5); `statusFile` (Task 1); `quotaFile`, `readQuotaCache` from `src/usage-quota.ts`; `countPlanSteps` from `src/jobs/plan.ts`; `repoHash` from `src/pipeline/worktree.ts`; `worktreeRoot` from `src/paths.ts`.
 - Produces: `createRuntime` additionally returns `snapshot: SnapshotWriter`.
 
-- [ ] **Step 1: Keep the delegate steps on the job record**
+- [ ] **Step 1: Write the failing test**
+
+In `test/jobs/manager.test.ts`:
+
+1. In `setup(o)`, add an option to its type, `events?: (pd: PipelineDeps) => void | Promise<void>;`, and in the `runJob` function, directly after `pd.onPhase?.("run");`, add:
+```ts
+      await o.events?.(pd);
+```
+2. Append at the end of the file:
+```ts
+describe("job activity", () => {
+  it("records what the job is doing and saves every change at once", async () => {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const ev = (state: string, toolName?: string, toolParams?: Record<string, unknown>) => ({
+      kind: "step" as const,
+      stepIndex: 1,
+      state,
+      stepType: "tool",
+      toolName,
+      toolParams,
+    });
+    const seen: (string | undefined)[] = [];
+    const { m, repo, deps } = setup({
+      events: async (pd) => {
+        const kind = async () => (await deps.store.list())[0]?.progress.activity?.kind;
+        pd.onEvent?.(ev("ACTIVE", "view_file", { AbsolutePath: "/wt/brief.md" }));
+        await sleep(40);
+        seen.push(await kind());
+        // Both arrive inside the 500 ms progress throttle; the change must still be saved.
+        pd.onEvent?.(ev("DONE", "view_file"));
+        pd.onEvent?.(ev("ACTIVE", "run_command", { CommandLine: "go test ./..." }));
+        await sleep(40);
+        seen.push(await kind());
+      },
+    });
+    await m.start({ repoRoot: repo, kind: "implement", task: "Do it", estimate: EST });
+    await m.idle();
+    expect(seen).toEqual(["reading", "testing"]);
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run test/jobs/manager.test.ts -t "job activity"`
+Expected: FAIL (the activity is never recorded: `seen` is `[undefined, undefined]`)
+
+- [ ] **Step 3: Keep the delegate steps on the job record**
 
 In `src/jobs/start.ts`, in the record created in "7. Create the record", replace
 ```ts
@@ -1284,7 +1578,7 @@ with
       : {}),
 ```
 
-- [ ] **Step 2: Record the activity from stream events**
+- [ ] **Step 4: Record the activity from stream events**
 
 In `src/jobs/execute.ts`:
 
@@ -1293,38 +1587,64 @@ In `src/jobs/execute.ts`:
 ```ts
     if (phase !== "run") record.progress.activity = undefined;
 ```
-3. In `onEvent`, inside `if (ev.kind === "step") {`, directly after `const params = ev.toolParams;` add:
+3. At the top of `onEvent`, directly after `let changed = false;` add:
 ```ts
+    let activityChanged = false;
+```
+4. In `onEvent`, inside `if (ev.kind === "step") {`, directly after `const params = ev.toolParams;` add:
+```ts
+      const prev = record.progress.activity;
       const activity = activityFor(
-        record.progress.activity,
+        prev,
         { toolName: ev.toolName, toolParams: params, state: ev.state },
         ctx.deps.now(),
       );
-      if (activity !== record.progress.activity) {
+      if (activity !== prev) {
         record.progress.activity = activity;
         changed = true;
+        // A change of what the job is doing is saved at once; the 500 ms throttle never retries.
+        if (activity?.kind !== prev?.kind || activity?.target !== prev?.target) {
+          activityChanged = true;
+        }
       }
 ```
+5. At the end of `onEvent`, change
+```ts
+    if (changed) {
+      updateProgressAndSave(false).catch(() => {});
+    }
+  };
 
-- [ ] **Step 3: Create and start the writer in the runtime**
+  let envelope: Envelope | undefined;
+```
+to
+```ts
+    if (changed) {
+      updateProgressAndSave(activityChanged).catch(() => {});
+    }
+  };
+
+  let envelope: Envelope | undefined;
+```
+
+- [ ] **Step 5: Create and start the writer in the runtime**
 
 In `src/runtime.ts`:
 
 1. Add imports:
 ```ts
-import { readFileSync } from "node:fs";
 import { countPlanSteps } from "./jobs/plan.js";
 import { repoHash } from "./pipeline/worktree.js";
 import { diffStat } from "./snapshot/diff.js";
 import { SnapshotWriter } from "./snapshot/writer.js";
 import { quotaFile, readQuotaCache } from "./usage-quota.js";
 ```
-and extend the existing `./paths.js` import with `statusFile`. (`existsSync` is already imported from `node:fs`; merge the two `node:fs` imports into one.)
+and extend the existing `./paths.js` import with `statusFile`, and the existing `node:fs` import with `readFileSync` (`import { existsSync, readFileSync } from "node:fs";`).
 2. Change the return type of `createRuntime` to `{ manager: JobManager; store: JobStore; snapshot: SnapshotWriter }`.
 3. Replace `const store = new JobStore(jobsDir({ env: o.env }));` with:
 ```ts
   let snapshot: SnapshotWriter | undefined;
-  const store = new JobStore(jobsDir({ env: o.env }), () => snapshot?.notify());
+  const store = new JobStore(jobsDir({ env: o.env }), (rec) => snapshot?.notify(rec));
   snapshot = new SnapshotWriter({
     file: statusFile({ env: o.env }),
     listJobs: () => store.list(),
@@ -1345,15 +1665,15 @@ and extend the existing `./paths.js` import with `statusFile`. (`existsSync` is 
 ```
 4. Where `createRuntime` returns `{ manager, store }`, return `{ manager, store, snapshot }`.
 
-- [ ] **Step 4: Run the full check**
+- [ ] **Step 6: Run the full check**
 
 Run: `npx prettier --write src test && npm run test:ci`
-Expected: PASS (existing server and job tests still pass; they exercise `createRuntime` and the event handling)
+Expected: PASS. No existing test calls `createRuntime` (the server startup test runs the built `dist`), so the runtime wiring itself is checked in Task 7, not here.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/jobs/start.ts src/jobs/execute.ts src/runtime.ts
+git add src/jobs/start.ts src/jobs/execute.ts src/runtime.ts test/jobs/manager.test.ts
 git commit -m "feat: write status.json from the running server"
 ```
 
@@ -1375,7 +1695,7 @@ Start any small delegated job through the agy-foreman tools in a Claude Code ses
 ```bash
 cat "$LOCALAPPDATA/agy-foreman/status.json"
 ```
-Expected: `"active": true`, a `plan.steps` list with one `running` entry, `plan.tokens` growing between reads, `jobs[0].activity.kind` changing between `reading`, `editing`, `testing` and `thinking`, and `plan.diff` appearing once Gemini writes a file. After the job is finalized the file shows `"active": false`.
+Expected: `"active": true`, a `plan.steps` list with one `running` entry, `plan.tokens` growing between reads (if it only jumps at the end of the job, `progress.tokens` is a single call's figure: tell the user, because the `tok` segment in claude-gauges would then be misleading), `jobs[0].activity.kind` changing between `reading`, `editing`, `testing` and `thinking`, and `plan.diff` appearing once Gemini writes a file. After the job is finalized the file shows `"active": false`.
 
 - [ ] **Step 3: Document the file**
 
