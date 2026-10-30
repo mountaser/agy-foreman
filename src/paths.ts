@@ -40,6 +40,11 @@ export function jobsDir(p?: Partial<PathEnv>): string {
   return joinFor(e.platform)(stateDir(e), "jobs");
 }
 
+export function statusFile(p?: Partial<PathEnv>): string {
+  const e = resolveEnv(p);
+  return joinFor(e.platform)(stateDir(e), "status.json");
+}
+
 export function expandHome(input: string, home: string = os.homedir()): string {
   if (input === "~") return home;
   if (input.startsWith("~/") || input.startsWith("~\\"))

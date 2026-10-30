@@ -4,6 +4,7 @@ import path from "node:path";
 import { KeyedQueue, readFileWithRetry, renameWithRetry } from "./fsutil.js";
 import type { Envelope, JobState } from "../pipeline/index.js";
 import type { Incident } from "./incidents.js";
+import type { Activity } from "../snapshot/types.js";
 
 export type JobPhase =
   | "queued"
@@ -35,6 +36,7 @@ export interface Progress {
   tokens: number;
   elapsedSec: number;
   etaSec?: number;
+  activity?: Activity;
 }
 
 export interface JobRecord {
@@ -46,7 +48,7 @@ export interface JobRecord {
   progress: Progress;
   createdAt: string;
   updatedAt: string;
-  plan?: { file: string; step: number };
+  plan?: { file: string; step: number; delegateSteps?: number[] };
   estimate?: Estimate;
   parentJobId?: string;
   envelope?: Envelope;
@@ -79,7 +81,10 @@ export function emptyProgress(): Progress {
 }
 
 export class JobStore {
-  constructor(readonly dir: string) {}
+  constructor(
+    readonly dir: string,
+    private readonly onWrite?: (rec: JobRecord) => void,
+  ) {}
 
   private queue = new KeyedQueue();
 
@@ -93,6 +98,11 @@ export class JobStore {
       await writeFile(tmpPath, snapshot, "utf8");
       await renameWithRetry(tmpPath, finalPath);
     });
+    try {
+      this.onWrite?.(rec);
+    } catch {
+      // observers must never break a write
+    }
   }
 
   async read(id: string): Promise<JobRecord | undefined> {
