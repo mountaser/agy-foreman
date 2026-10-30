@@ -5,6 +5,8 @@ import { z } from "zod";
 export const EFFORTS = ["low", "medium", "high"] as const;
 export type Effort = (typeof EFFORTS)[number];
 export const CONFIG_FILE = ".agy-foreman.json";
+/** Shown wherever an implement job cannot run because the repo has no `test_command`. */
+export const MISSING_TEST_COMMAND = `config.test_command is required for implement jobs. Create ${CONFIG_FILE} (see README, "Configuration").`;
 
 export class ConfigError extends Error {
   constructor(message: string) {

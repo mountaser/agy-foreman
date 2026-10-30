@@ -56,8 +56,9 @@ Contract tests (the orchestrator writes them after reading the existing tests fo
 **Files:**
 - Create: `src/apply/blocks.ts`
 - Create: `src/apply/apply.ts`
-- Modify: `src/cli.ts`
-- Test: `test/apply/blocks.test.ts`, `test/apply/apply.test.ts`
+- Test: `test/apply/blocks.test.ts`, `test/apply/apply.test.ts` (already written and committed; do not edit them)
+
+The orchestrator wires the `apply` command in `src/cli.ts` afterwards; do not touch `cli.ts`. Only create `src/apply/blocks.ts` and `src/apply/apply.ts`.
 
 `src/apply/blocks.ts` exports a pure function:
 
@@ -86,10 +87,10 @@ Rules (spec change 3, version 1 creates files only; the `files` argument is the 
 
 `parsePlanStep` already extracts `testBlocks`; `planFiles` takes the whole step text, so the test blocks are included. No change to `parsePlanStep` is needed.
 
-`src/apply/apply.ts` exports `applyStep(opts: { repoRoot: string; planFile: string; step: number; dryRun?: boolean; run: (cmd: string[], cwd: string) => Promise<{ code: number; out: string }> }): Promise<{ ok: boolean; written: string[]; problems: BlockProblem[]; testExit?: number; testTail?: string }>`.
+`src/apply/apply.ts` exports `applyStep(opts: { repoRoot: string; planFile: string; step: number; dryRun?: boolean; testCommand: string[] | undefined; run: (cmd: string[], cwd: string) => Promise<{ code: number; out: string }> }): Promise<{ ok: boolean; written: string[]; problems: BlockProblem[]; testExit?: number; testTail?: string }>`.
 
 Behavior, in this order; every refusal returns `ok: false`, writes nothing and runs no tests:
-1. Load the project config; refuse with `MISSING_TEST_COMMAND` (from Task 2) when `test_command` is missing.
+1. Refuse with `MISSING_TEST_COMMAND` (import it from `src/config.ts`) when `opts.testCommand` is undefined or empty; the caller loads the config and passes `testCommand`.
 2. Refuse when the working tree has tracked changes (`git status --porcelain --untracked-files=no` is not empty).
 3. Run `planFiles`; refuse when `problems` is not empty.
 4. Refuse with `nothing to apply: the step has no file blocks` when `files` is empty. Tests are never run and reported green for an empty step.
@@ -283,12 +284,13 @@ Tests: an entry without `orchestratorChars` is ignored; the ratio is the median 
 
 Expected saving: no tokens directly. Today the figure is meaningless: passed jobs return on average 46.6k Gemini output tokens against estimates of about 4-5k, a ratio near 10, while the real orchestrator cost was about 8k characters (about 2k tokens) per job. With a correct figure, the token gate and the orchestrator's estimates can be calibrated.
 
-### Optional E: `agy-foreman report` for routing decisions (delegate, M)
+### Task 8: Optional E - `agy-foreman report` for routing decisions (delegate, M)
 
 **Files:**
 - Create: `src/report.ts`
-- Modify: `src/cli.ts`
-- Test: `test/report.test.ts`
+- Test: `test/report.test.ts` (already written and committed; do not edit it)
+
+The orchestrator wires the `report` command in `src/cli.ts` afterwards; do not touch `cli.ts`. Implement only the pure function `buildReport(entries: LedgerEntry[], jobs: ReportJob[], opts?: { since?: Date }): string` (export the type `ReportJob = { id: string; returnedChars?: number }`). The output format is fixed by `test/report.test.ts`: first line `jobs: N` (with ` (since YYYY-MM-DD)` when `since` is given), a table with one row per state (state, count, Gemini tokens with thousands separators, minutes with one decimal), `incidents: cat=n ...`, `orchestrator chars per job: median M max X`, and `costliest non-passed:` followed by up to five rows (job id, state, tokens, estimate reason). An empty input returns the text `no jobs` followed by one newline. At most 40 lines.
 
 Behavior: `agy-foreman report [--since YYYY-MM-DD]` prints, from the ledger and job records:
 - per state: count, Gemini tokens (using Task 1's `usageTotal`) and minutes;

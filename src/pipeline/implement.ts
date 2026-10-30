@@ -1,6 +1,7 @@
 // Execution pipeline for implement jobs (contract tests, worktree, gate, verification).
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { MISSING_TEST_COMMAND } from "../config.js";
 import { renderBrief, RUN_PROMPT } from "./brief.js";
 import { addContractTests, redCheck } from "./contract.js";
 import { git, runCommand } from "./exec.js";
@@ -39,7 +40,7 @@ export async function runImplementJob(
     }
     return buildEnvelope(spec, deps, startTime, {
       state: "refused",
-      reason: "config.test_command is required for implement jobs",
+      reason: MISSING_TEST_COMMAND,
       baseSha,
     });
   }
