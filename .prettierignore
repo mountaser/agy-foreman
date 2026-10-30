@@ -5,3 +5,5 @@ package
 package-lock.json
 docs
 .agents
+
+test/snapshot/build.test.ts
