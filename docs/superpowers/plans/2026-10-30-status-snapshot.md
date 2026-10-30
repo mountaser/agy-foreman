@@ -4,6 +4,8 @@
 
 **Goal:** Make the agy-foreman server write `status.json`, a small versioned file describing the delegation work that is running, as specified in `docs/superpowers/specs/2026-10-30-status-snapshot-design.md`.
 
+> **Later change:** the snapshot no longer carries `plan.tokens` (the usage figures that reach the server during a run are per model call, not totals), and a job without a plan gets a title cut to 40 characters. The spec is authoritative; where this plan mentions tokens, ignore it.
+
 **Architecture:** Pure functions turn job records into a snapshot (`buildSnapshot`), classify tool calls into plain activities (`activityFor`) and measure a worktree's diff (`diffStat`). A `SnapshotWriter` runs inside the MCP server, rebuilds the snapshot whenever a job record is written and once a second while a job is active, and writes it atomically. The job store gets an optional write callback, job records get an `activity` and the plan's `delegateSteps`.
 
 **Tech Stack:** TypeScript (strict, ESM), Node 20+, vitest, prettier. No new dependencies.

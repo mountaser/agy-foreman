@@ -32,7 +32,6 @@ The file is a public contract. Its format is versioned and documented here.
     "done": 2,
     "failed": 0,
     "elapsedSec": 651,
-    "tokens": 424000,
     "diff": { "files": 2, "added": 217, "deleted": 0 }
   },
   "jobs": [
@@ -66,11 +65,10 @@ The file is a public contract. Its format is versioned and documented here.
 | `plan.done` | number | How many entries of `steps` are `passed`. |
 | `plan.failed` | number | How many entries are `failed`. |
 | `plan.elapsedSec` | number | Seconds since the first job of the group was created. |
-| `plan.tokens` | number | Gemini input plus output tokens used by all jobs of the group. Cached reads are not counted. |
 | `plan.diff` | object, optional | Files, added lines and deleted lines produced by the group. Absent when nothing is known. |
 | `jobs` | array | Queued and running jobs of the group, oldest first. |
 | `jobs[].step` | number or null | Plan step number, or null without a plan. |
-| `jobs[].title` | string | Task title without `Task N:` prefix, backticks or Markdown emphasis. |
+| `jobs[].title` | string | Task title without `Task N:` prefix, backticks or Markdown emphasis. For a job without a plan it is cut to 40 characters, ending in `…` when cut. |
 | `jobs[].state` | string | `queued` or `running`. |
 | `jobs[].phase` | string | `queued`, `awaiting_approval`, `prepare`, `contract`, `brief`, `run`, `verify`, `report` or `done`. |
 | `jobs[].activity` | object, optional | Present only while `phase` is `run` and something has been seen. |
@@ -130,4 +128,5 @@ Fields may be added in later versions of the format without changing `version`. 
 
 - Removing agy-foreman's own status line renderer and the `statusline` command's install prompt. That follows once claude-gauges has a published release.
 - Per-job history, finished jobs and failure reasons. Only active work is described.
+- Token counts. The usage figures that reach the server during a run are per model call, not running totals, so no honest total is available while a job runs.
 - Writing the file from a process other than the MCP server.

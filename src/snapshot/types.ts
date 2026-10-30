@@ -39,7 +39,6 @@ export interface Snapshot {
     done: number;
     failed: number;
     elapsedSec: number;
-    tokens: number;
     diff?: DiffStat;
   };
   jobs: SnapshotJob[];

@@ -80,11 +80,18 @@ function stepNumbers(shown: JobRecord, group: JobRecord[], i: BuildInput): numbe
   return [...new Set(group.map((j) => j.plan!.step))].sort((a, b) => a - b);
 }
 
+const SOLO_TITLE_MAX = 40;
+
+/** A job without a plan is titled by its task text, which can be long. */
+function shortTitle(title: string): string {
+  return title.length > SOLO_TITLE_MAX ? title.slice(0, SOLO_TITLE_MAX - 1).trimEnd() + "…" : title;
+}
+
 function toSnapshotJob(j: JobRecord): SnapshotJob {
   return {
     id: j.id,
     step: j.plan?.step ?? null,
-    title: cleanTitle(j.title),
+    title: j.plan ? cleanTitle(j.title) : shortTitle(cleanTitle(j.title)),
     state: j.state === "queued" ? "queued" : "running",
     phase: j.progress.phase,
     ...(j.progress.phase === "run" && j.progress.activity ? { activity: j.progress.activity } : {}),
@@ -134,10 +141,6 @@ export function buildSnapshot(i: BuildInput): Snapshot {
       elapsedSec: Math.max(
         0,
         Math.round((i.now.getTime() - Date.parse(group[0].createdAt)) / 1000),
-      ),
-      tokens: group.reduce(
-        (sum, j) => sum + (j.envelope?.usage?.totalTokens ?? j.progress.tokens ?? 0),
-        0,
       ),
       ...(diff ? { diff } : {}),
     },

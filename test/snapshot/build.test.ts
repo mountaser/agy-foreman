@@ -110,7 +110,6 @@ describe("buildSnapshot", () => {
       done: 2,
       failed: 0,
       elapsedSec: 600,
-      tokens: 350000,
       diff: { files: 4, added: 16, deleted: 3 },
     });
     expect(s.jobs).toEqual([
@@ -158,6 +157,18 @@ describe("buildSnapshot", () => {
       ["late", "running", "prepare", undefined],
       ["queued", "queued", "queued", undefined],
     ]);
+  });
+
+  it("shortens the title of a job without a plan", () => {
+    const long = "List every exported function and class in src/snapshot with file and line";
+    const s = buildSnapshot({ ...base, jobs: [rec({ id: "solo", title: long })] });
+    expect(s.jobs[0].title).toBe("List every exported function and class…");
+    expect(s.jobs[0].title.length).toBeLessThanOrEqual(40);
+    const planned = buildSnapshot({
+      ...base,
+      jobs: [rec({ id: "p", title: long, plan: plan(1, [1]) })],
+    });
+    expect(planned.jobs[0].title).toBe(long);
   });
 
   it("treats a job without a plan as a single step", () => {
@@ -248,7 +259,6 @@ describe("buildSnapshot", () => {
     expect(s.plan?.steps).toEqual(["running", "pending"]);
     expect(s.plan?.done).toBe(0);
     expect(s.plan?.elapsedSec).toBe(600);
-    expect(s.plan?.tokens).toBe(1000);
   });
 
   it("keeps the earlier jobs of the same run when the gaps are under two hours", () => {
