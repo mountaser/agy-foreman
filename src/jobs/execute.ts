@@ -180,6 +180,7 @@ export async function executeJob(
       durationSec: record.progress.elapsedSec,
       estimate: record.estimate,
       returnedTokens: 0,
+      usageTotal: record.progress.tokens,
       at: ctx.deps.now().toISOString(),
     });
   } else if (envelope) {
@@ -208,7 +209,8 @@ export async function executeJob(
       runSec: envelope.durationSec,
       estimate: record.estimate,
       returnedTokens,
-      usageTotal: envelope.usage?.totalTokens,
+      // A run that died before its result event has no envelope usage; the stream's last count stands in.
+      usageTotal: envelope.usage?.totalTokens ?? record.progress.tokens,
       at: ctx.deps.now().toISOString(),
       ...(incident ? { incident } : {}),
     });

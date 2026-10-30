@@ -10,7 +10,9 @@ export interface LedgerEntry {
   durationSec: number;
   runSec?: number;
   estimate?: Estimate;
+  /** Gemini output tokens (or report length / 4). Not what the job cost the orchestrator. */
   returnedTokens: number;
+  /** All Gemini tokens the run used, whatever state it ended in. */
   usageTotal?: number;
   at: string;
   incident?: Incident;

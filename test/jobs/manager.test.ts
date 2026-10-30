@@ -390,3 +390,61 @@ describe("job activity", () => {
     expect(seen).toEqual(["reading", "testing"]);
   });
 });
+
+describe("ledger usage", () => {
+  const usageEvent = (totalTokens: number) => ({
+    kind: "step" as const,
+    stepIndex: 1,
+    state: "ACTIVE",
+    stepType: "tool",
+    usage: { totalTokens } as never,
+  });
+
+  it("records the tokens seen so far for an error job", async () => {
+    const { m, repo, deps } = setup({
+      fail: "agy exploded",
+      events: (pd) => {
+        pd.onEvent?.(usageEvent(5000));
+      },
+    });
+    await m.start({ repoRoot: repo, kind: "implement", task: "Fix it", estimate: EST });
+    await m.idle();
+    const [entry] = await deps.ledger.entries();
+    expect(entry).toMatchObject({ state: "error", usageTotal: 5000 });
+  });
+
+  it("falls back to the progress tokens when the envelope has no usage", async () => {
+    const { m, repo, deps } = setup({
+      result: (s) => envelope(s, "timeout"),
+      events: (pd) => {
+        pd.onEvent?.(usageEvent(7000));
+      },
+    });
+    await m.start({ repoRoot: repo, kind: "implement", task: "Fix it", estimate: EST });
+    await m.idle();
+    const [entry] = await deps.ledger.entries();
+    expect(entry).toMatchObject({ state: "timeout", usageTotal: 7000 });
+  });
+
+  it("prefers the envelope usage when there is one", async () => {
+    const { m, repo, deps } = setup({
+      result: (s) =>
+        envelope(s, "passed", { usage: { totalTokens: 9000, outputTokens: 10 } as never }),
+      events: (pd) => {
+        pd.onEvent?.(usageEvent(7000));
+      },
+    });
+    await m.start({ repoRoot: repo, kind: "implement", task: "Fix it", estimate: EST });
+    await m.idle();
+    const [entry] = await deps.ledger.entries();
+    expect(entry?.usageTotal).toBe(9000);
+  });
+
+  it("is 0 when nothing was counted", async () => {
+    const { m, repo, deps } = setup({ result: (s) => envelope(s, "refused") });
+    await m.start({ repoRoot: repo, kind: "implement", task: "Fix it", estimate: EST });
+    await m.idle();
+    const [entry] = await deps.ledger.entries();
+    expect(entry).toMatchObject({ state: "refused", usageTotal: 0 });
+  });
+});
